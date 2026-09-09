@@ -21,6 +21,7 @@ const CUSTOM_SIZE_MAX_RATIO = 3;
 const CUSTOM_SIZE_MIN_PIXELS = 655360;
 const CUSTOM_SIZE_MAX_PIXELS = 8294400;
 const DEFAULT_OUTPUT_COMPRESSION = 100;
+const FIXED_RESPONSE_FORMAT = 'url';
 const DEFAULT_INPUT_FIDELITY = 'low';
 const DEFAULT_REASONING_EFFORT = 'xhigh';
 const DEFAULT_IMAGE_STREAM_MODE = 'non_stream';
@@ -1718,6 +1719,7 @@ function appendImagesPayloadOptions(payload) {
   if (quality) payload.quality = quality;
   if (outputFormat) payload.output_format = outputFormat;
   if (compression !== null) payload.output_compression = compression;
+  payload.response_format = FIXED_RESPONSE_FORMAT;
   payload.moderation = 'low';
   return payload;
 }
@@ -1735,6 +1737,7 @@ function appendImagesFormDataOptions(formData) {
   if (quality) formData.append('quality', quality);
   if (outputFormat) formData.append('output_format', outputFormat);
   if (compression !== null) formData.append('output_compression', String(compression));
+  formData.append('response_format', FIXED_RESPONSE_FORMAT);
   formData.append('moderation', 'low');
 
   if (!isInputFidelityUnsupportedImageModel()) {
@@ -1762,6 +1765,7 @@ async function buildResponsesPayload() {
     size: resolveSizeValue(),
     quality: el.quality.value || 'auto',
     output_format: outputFormat,
+    response_format: FIXED_RESPONSE_FORMAT,
     moderation: 'low',
     partial_images: FIXED_PARTIAL_IMAGES
   };
