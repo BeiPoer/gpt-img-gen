@@ -8,7 +8,7 @@ const HISTORY_DB_NAME = 'gpt-image-gen2-image-generation';
 const HISTORY_DB_VERSION = 1;
 const HISTORY_DB_STORE = 'history';
 const HISTORY_LIMIT = 10;
-const DEFAULT_API_MODE = 'responses';
+const DEFAULT_API_MODE = 'images';
 const DEFAULT_RESPONSE_MODEL = 'gpt-5.5';
 const DEFAULT_IMAGE_MODEL = 'gpt-image-2';
 const DEFAULT_SIZE = '1024x1024';
@@ -35,7 +35,7 @@ const PAGE_OPTIONS = {
   noConfiguredApiKey: readBooleanSearchParam('nokey'),
   noHeader: readBooleanSearchParam('noheader'),
   fixedApiUrl: readSearchParam('url'),
-  apiMode: readSearchParam('type') === 'image' ? 'images' : DEFAULT_API_MODE
+  apiMode: DEFAULT_API_MODE
 };
 const SUPPORTED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
 const INPUT_FIDELITY_UNSUPPORTED_IMAGE_MODELS = new Set(['gpt-image-2', 'gpt-image-1-mini']);
@@ -92,7 +92,6 @@ const el = {
   reasoningEffort: document.getElementById('reasoningEffort'),
   outputFormat: document.getElementById('outputFormat'),
   outputCompression: document.getElementById('outputCompression'),
-  imageStreamMode: document.getElementById('imageStreamMode'),
   clearHistoryButton: document.getElementById('clearHistoryButton'),
   resetButton: document.getElementById('resetButton'),
   submitButton: document.getElementById('submitButton'),
@@ -213,6 +212,10 @@ function bindEvents() {
     updateRunSummary();
     markRestoredDirty();
   });
+  el.imageModel.addEventListener('change', () => {
+    updateRunSummary();
+    markRestoredDirty();
+  });
   el.prompt.addEventListener('input', () => {
     updatePromptMeta();
     markRestoredDirty();
@@ -243,7 +246,7 @@ function bindEvents() {
     });
   });
   el.advancedDetails.addEventListener('toggle', persistAdvancedSettings);
-  [el.quality, el.reasoningEffort, el.outputFormat, el.outputCompression, el.imageStreamMode].forEach((input) => {
+  [el.quality, el.reasoningEffort, el.outputFormat, el.outputCompression].forEach((input) => {
     input.addEventListener('change', persistAdvancedSettings);
     input.addEventListener('input', persistAdvancedSettings);
   });
@@ -512,7 +515,7 @@ function resetModelSelectsToDefaults() {
 }
 
 function normalizeApiMode(value) {
-  return trimmedStringValue(value) === 'images' ? 'images' : DEFAULT_API_MODE;
+  return DEFAULT_API_MODE;
 }
 
 function updateApiModeUI() {
@@ -1026,12 +1029,16 @@ function fillModelSelect(select, options) {
 
 function applyLoadedModelOptions(allModels, configSignature, fromCache) {
   const responseModels = allModels.filter((option) => !isImageGenerationModelId(option.value));
+  const imageModels = allModels.filter((option) => option.value.toLowerCase().startsWith('gpt-image'));
   state.responseModelOptions = responseModels.length > 0
     ? responseModels
     : [{ value: DEFAULT_RESPONSE_MODEL, label: DEFAULT_RESPONSE_MODEL }];
   state.modelOptionsConfigSignature = configSignature;
   fillModelSelect(el.responseModel, state.responseModelOptions);
-  el.imageModel.value = DEFAULT_IMAGE_MODEL;
+  fillModelSelect(el.imageModel, imageModels.length > 0
+    ? imageModels
+    : [{ value: DEFAULT_IMAGE_MODEL, label: DEFAULT_IMAGE_MODEL }]);
+  setModelControlValue('image', resolveImageModelValue());
   setModelControlValue('response', resolvePreferredResponseModelValue(state.responseModelOptions, configSignature));
   updateRunSummary();
 
@@ -1851,7 +1858,7 @@ function resolveReasoningEffortValue() {
 }
 
 function shouldUseImagesStream() {
-  return normalizeImageStreamMode(el.imageStreamMode.value) === 'stream';
+  return false;
 }
 
 function getImageStreamModeLabel() {
@@ -2699,7 +2706,7 @@ function captureCurrentForm() {
     reasoningEffort: stringValue(el.reasoningEffort.value),
     outputFormat: stringValue(el.outputFormat.value),
     outputCompression: stringValue(el.outputCompression.value),
-    imageStreamMode: normalizeImageStreamMode(el.imageStreamMode.value),
+    imageStreamMode: DEFAULT_IMAGE_STREAM_MODE,
     advancedOpen: el.advancedDetails.open
   };
 }
@@ -3063,7 +3070,6 @@ function restoreHistoryEntry(entry) {
   el.reasoningEffort.value = entry.form.reasoningEffort;
   el.outputFormat.value = entry.form.outputFormat;
   el.outputCompression.value = entry.form.outputCompression;
-  el.imageStreamMode.value = entry.form.imageStreamMode;
   el.advancedDetails.open = entry.form.advancedOpen;
   state.resultImages = [...entry.results];
   state.restoredFromCache = true;
@@ -3374,7 +3380,6 @@ function applyAdvancedSettings(settings) {
   el.reasoningEffort.value = settings.reasoningEffort;
   el.outputFormat.value = settings.outputFormat;
   el.outputCompression.value = settings.outputCompression;
-  el.imageStreamMode.value = settings.imageStreamMode;
   el.advancedDetails.open = settings.advancedOpen;
 }
 
@@ -3384,7 +3389,7 @@ function persistAdvancedSettings() {
     reasoningEffort: stringValue(el.reasoningEffort.value),
     outputFormat: stringValue(el.outputFormat.value),
     outputCompression: stringValue(el.outputCompression.value),
-    imageStreamMode: normalizeImageStreamMode(el.imageStreamMode.value),
+    imageStreamMode: DEFAULT_IMAGE_STREAM_MODE,
     advancedOpen: el.advancedDetails.open
   };
   localStorage.setItem(ADVANCED_CACHE_KEY, JSON.stringify(payload));
@@ -3416,7 +3421,7 @@ function createDefaultAdvancedSettings() {
 }
 
 function normalizeImageStreamMode(value) {
-  return trimmedStringValue(value) === 'non_stream' ? 'non_stream' : DEFAULT_IMAGE_STREAM_MODE;
+  return DEFAULT_IMAGE_STREAM_MODE;
 }
 
 function normalizeNonNegativeInt(value) {

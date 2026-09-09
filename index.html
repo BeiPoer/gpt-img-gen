@@ -75,7 +75,9 @@
           </div>
           <div class="field">
             <label for="imageModel">图片模型</label>
-            <input class="input" id="imageModel" value="gpt-image-2" readonly aria-readonly="true">
+            <select class="select" id="imageModel">
+              <option value="gpt-image-2">gpt-image-2</option>
+            </select>
           </div>
         </div>
         <div class="field">
@@ -244,20 +246,13 @@
               </div>
             </div>
 
-            <div class="field" data-api-mode-hidden="responses">
-              <label for="imageStreamMode">响应方式</label>
-              <select class="select" id="imageStreamMode">
-                <option value="stream">流式</option>
-                <option value="non_stream" selected>非流式（默认）</option>
-              </select>
-            </div>
           </div>
         </details>
       </div>
 
       <div class="section submit-section">
         <div class="submit-bar">
-          <div class="submit-summary truncate" id="submitSummary">准备生成：Responses API · 文生图 · 1024x1024 · PNG</div>
+          <div class="submit-summary truncate" id="submitSummary">准备生成：Images API · 文生图 · 1024x1024 · PNG</div>
           <div class="action-row">
             <button class="btn" id="clearHistoryButton" type="button">清空历史记录</button>
             <button class="btn" id="resetButton" type="button">重置表单</button>
