@@ -2580,14 +2580,10 @@ function createResultCard(image, index) {
   meta.className = 'result-meta';
   const nameWrap = document.createElement('div');
   nameWrap.style.minWidth = '0';
-  const fileName = document.createElement('div');
-  fileName.className = 'truncate';
-  fileName.style.fontWeight = '700';
-  fileName.textContent = image.fileName;
   const mime = document.createElement('div');
   mime.className = 'hint';
   mime.textContent = image.mimeType;
-  nameWrap.append(fileName, mime);
+  nameWrap.append(mime);
   const pill = document.createElement('span');
   pill.className = 'pill';
   pill.textContent = `#${index + 1}`;
