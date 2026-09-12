@@ -1595,7 +1595,7 @@ h1 { font-size:22px; letter-spacing:.02em; }
 .form-heading { flex:0 0 60px; display:flex; align-items:center; gap:11px; padding:0 20px; border-bottom:1px solid #edf2f6; }
 .form-heading h2 { margin:0; font-size:17px; }
 .form-heading .icon { color:#243955; }
-.form-content { min-height:0; overflow:auto; padding:0 20px 18px; scrollbar-width:thin; scrollbar-color:#cbd5e1 transparent; }
+.form-content { min-height:0; overflow-y:auto; overflow-x:hidden; padding:0 20px 18px; scrollbar-width:thin; scrollbar-color:#cbd5e1 transparent; }
 .form-panel .section { padding:14px 0; border-top:1px solid #edf2f6; }
 .form-panel .section:first-child { border-top:0; }
 .config-details { border:0 !important; border-radius:0 !important; background:none !important; }
@@ -1622,6 +1622,7 @@ h1 { font-size:22px; letter-spacing:.02em; }
 .config-body .action-row { justify-content:space-between; align-items:center; margin-left:110px; }
 .config-body .action-row .config-summary { order:0; flex:1; min-width:0; max-width:none; border:0; padding:0; background:none; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; overflow-wrap:normal; line-height:1.5; }
 .config-body .action-row { flex-wrap:nowrap; }
+.config-body .action-row { min-width:0; }
 #saveConfigButton { flex-shrink:0; }
 .config-summary.is-checking { color:#2672b3; }
 .api-status { display:inline-flex; align-items:center; max-width:260px; }
