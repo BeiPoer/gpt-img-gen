@@ -33,7 +33,7 @@ Copy-Item app.config.example.json app.config.json
 
 访问页面时追加 `?url=https%3A%2F%2Fexample.com` 会把 API URL 固定为该地址且禁止用户更改；该值优先于本地保存配置和 `app.config.json` 默认值，保存配置时仍会保存当前固定 API URL 和用户输入的 API Key。
 
-仅使用 Images API 生成图片，图片模型固定为 `gpt-image-2`。
+仅使用 Images API 生成图片。在“生成模式”下方选择图片模型，默认使用 `gpt-image-2`；测试连接成功后，下拉框会显示接口返回的 `gpt-image` 系列模型。文生图、图生图和局部重绘请求使用当前选中的模型。
 
 ```bash
 npm run dev

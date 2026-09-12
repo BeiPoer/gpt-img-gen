@@ -1,5 +1,4 @@
 const CONFIG_CACHE_KEY = 'gpt-image-gen2:config';
-const ADVANCED_CACHE_KEY = 'gpt-image-gen2:advanced';
 const MODEL_LIST_CACHE_KEY = 'gpt-image-gen2:model-list-cache';
 const RESPONSE_MODEL_SELECTION_CACHE_KEY = 'gpt-image-gen2:response-model-selection';
 const APP_CONFIG_PATH = './app.config.json';
@@ -12,6 +11,8 @@ const DEFAULT_API_MODE = 'images';
 const DEFAULT_RESPONSE_MODEL = 'gpt-5.5';
 const DEFAULT_IMAGE_MODEL = 'gpt-image-2';
 const DEFAULT_SIZE = '1024x1024';
+const DEFAULT_IMAGE_COUNT = 1;
+const MAX_IMAGE_COUNT = 10;
 const DEFAULT_CUSTOM_SIZE_WIDTH = '1024';
 const DEFAULT_CUSTOM_SIZE_HEIGHT = '1024';
 const CUSTOM_SIZE_VALUE = 'custom';
@@ -20,7 +21,6 @@ const CUSTOM_SIZE_MULTIPLE = 16;
 const CUSTOM_SIZE_MAX_RATIO = 3;
 const CUSTOM_SIZE_MIN_PIXELS = 655360;
 const CUSTOM_SIZE_MAX_PIXELS = 8294400;
-const DEFAULT_OUTPUT_COMPRESSION = 100;
 const FIXED_RESPONSE_FORMAT = 'url';
 const DEFAULT_INPUT_FIDELITY = 'low';
 const DEFAULT_REASONING_EFFORT = 'xhigh';
@@ -39,7 +39,6 @@ const PAGE_OPTIONS = {
 };
 const SUPPORTED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
 const INPUT_FIDELITY_UNSUPPORTED_IMAGE_MODELS = new Set(['gpt-image-2', 'gpt-image-1-mini']);
-const REASONING_EFFORT_VALUES = ['none', 'low', 'medium', 'high', 'xhigh'];
 const SIZE_PRESET_VALUES = new Set([
   '1024x1024', '2048x2048', '2016x1344', '1344x2016', '2048x1536',
   '1536x2048', '2048x1152', '1152x2048', '2880x2880', '3504x2336',
@@ -49,6 +48,8 @@ let runtimeConfig = createDefaultRuntimeConfig();
 const el = {
   configDetails: document.getElementById('configDetails'),
   configSummary: document.getElementById('configSummary'),
+  apiStatus: document.getElementById('apiStatus'),
+  apiStatusText: document.getElementById('apiStatusText'),
   apiUrl: document.getElementById('apiUrl'),
   apiKey: document.getElementById('apiKey'),
   fillFreeKeyButton: document.getElementById('fillFreeKeyButton'),
@@ -84,25 +85,24 @@ const el = {
   maskDrawingCanvas: document.getElementById('maskDrawingCanvas'),
   size: document.getElementById('size'),
   sizeSummary: document.getElementById('sizeSummary'),
-  customSizePanel: document.getElementById('customSizePanel'),
   customSizeWidth: document.getElementById('customSizeWidth'),
   customSizeHeight: document.getElementById('customSizeHeight'),
-  advancedDetails: document.getElementById('advancedDetails'),
-  quality: document.getElementById('quality'),
-  reasoningEffort: document.getElementById('reasoningEffort'),
-  outputFormat: document.getElementById('outputFormat'),
-  outputCompression: document.getElementById('outputCompression'),
   clearHistoryButton: document.getElementById('clearHistoryButton'),
   resetButton: document.getElementById('resetButton'),
   submitButton: document.getElementById('submitButton'),
+  imageCount: document.getElementById('imageCount'),
+  decreaseImageCountButton: document.getElementById('decreaseImageCountButton'),
+  increaseImageCountButton: document.getElementById('increaseImageCountButton'),
   submitSummary: document.getElementById('submitSummary'),
   resultSummary: document.getElementById('resultSummary'),
   resultBulkActions: document.getElementById('resultBulkActions'),
+  clearCanvasButton: document.getElementById('clearCanvasButton'),
   resultBody: document.getElementById('resultBody'),
   copyAllButton: document.getElementById('copyAllButton'),
   downloadAllButton: document.getElementById('downloadAllButton'),
   historySummary: document.getElementById('historySummary'),
   historyCount: document.getElementById('historyCount'),
+  historyClearButton: document.getElementById('historyClearButton'),
   historyList: document.getElementById('historyList'),
   previewModal: document.getElementById('previewModal'),
   previewTitle: document.getElementById('previewTitle'),
@@ -137,6 +137,7 @@ const state = {
   submitting: false,
   loadingModels: false,
   configCheckStatus: 'unconfigured',
+  configCheckError: '',
   modelOptionsConfigSignature: '',
   abortController: null,
   modelLoadRequestId: 0,
@@ -173,7 +174,6 @@ async function init() {
   runtimeConfig = await loadRuntimeConfig();
   applyRuntimeConfigUI();
   restoreConfig();
-  restoreAdvancedSettings();
   updateApiModeUI();
   bindEvents();
   updateModeUI();
@@ -184,7 +184,7 @@ async function init() {
   renderSourceImages();
   renderResults();
   state.history = await loadImageHistory();
-  await persistImageHistory();
+  if (state.history.length > 0) await persistImageHistory();
   renderHistory();
   if (hasCompleteConfigFields()) loadModels();
 }
@@ -201,7 +201,7 @@ function bindEvents() {
   });
   el.fillFreeKeyButton.addEventListener('click', fillConfiguredApiKey);
   el.toggleKeyButton.addEventListener('click', toggleApiKeyVisibility);
-  el.saveConfigButton.addEventListener('click', saveConfig);
+  el.saveConfigButton.addEventListener('click', testConnection);
 
   el.modeButtons.forEach((button) => {
     button.addEventListener('click', () => setMode(button.dataset.mode));
@@ -234,21 +234,19 @@ function bindEvents() {
       openSourceFilePicker();
     }
   });
-  el.size.addEventListener('change', () => {
-    updateSizeUI();
-    markRestoredDirty();
-  });
-  [el.customSizeWidth, el.customSizeHeight].forEach((input) => {
-    input.addEventListener('input', () => {
-      updateSizeSummary();
-      updateRunSummary();
+  document.querySelectorAll('[data-size-preset]').forEach((button) => {
+    button.addEventListener('click', () => {
+      el.size.value = button.dataset.sizePreset || DEFAULT_SIZE;
+      updateSizeUI();
       markRestoredDirty();
     });
   });
-  el.advancedDetails.addEventListener('toggle', persistAdvancedSettings);
-  [el.quality, el.reasoningEffort, el.outputFormat, el.outputCompression].forEach((input) => {
-    input.addEventListener('change', persistAdvancedSettings);
-    input.addEventListener('input', persistAdvancedSettings);
+  [el.customSizeWidth, el.customSizeHeight].forEach((input) => {
+    input.addEventListener('input', () => {
+      el.size.value = CUSTOM_SIZE_VALUE;
+      updateSizeUI();
+      markRestoredDirty();
+    });
   });
 
   el.maskBrushSize.addEventListener('input', () => {
@@ -269,6 +267,14 @@ function bindEvents() {
 
   el.resetButton.addEventListener('click', resetForm);
   el.clearHistoryButton.addEventListener('click', confirmClearHistory);
+  el.historyClearButton?.addEventListener('click', confirmClearHistory);
+  el.clearCanvasButton?.addEventListener('click', clearCanvas);
+  el.imageCount.addEventListener('input', () => {
+    updateRunSummary();
+    markRestoredDirty();
+  });
+  el.decreaseImageCountButton.addEventListener('click', () => changeImageCount(-1));
+  el.increaseImageCountButton.addEventListener('click', () => changeImageCount(1));
   el.submitButton.addEventListener('click', () => {
     if (state.submitting) {
       cancelGeneration();
@@ -390,7 +396,7 @@ function restoreConfig() {
   el.apiUrl.value = getFixedApiBaseUrl() || cachedApiUrl || runtimeConfig.apiUrl;
   el.apiKey.value = cachedApiKey || configuredApiKey;
   state.configCheckStatus = 'unconfigured';
-  el.configDetails.open = !hasCompleteConfigFields();
+  el.configDetails.open = true;
   clearStaleModelCaches(hasCompleteConfigFields() ? getConfigSignature() : '');
   updateConfiguredKeyNotice();
   setApiKeyBalanceNotice(false);
@@ -409,12 +415,17 @@ function saveConfig(options = {}) {
   };
   localStorage.setItem(CONFIG_CACHE_KEY, JSON.stringify(config));
   clearStaleModelCaches(hasCompleteConfigFields() ? getConfigSignature() : '');
-  showToast('配置已保存', 'success');
+  if (!options.silent) showToast('配置已保存', 'success');
   updateConfigSummary();
   if (hasCompleteConfigFields()) {
-    el.configDetails.open = false;
     if (shouldLoadModels) loadModels();
   }
+}
+
+async function testConnection() {
+  if (state.loadingModels) return;
+  if (hasCompleteConfigFields()) saveConfig({ loadModelsAfterSave: false, silent: true });
+  await loadModels({ force: true });
 }
 
 function toggleApiKeyVisibility() {
@@ -474,29 +485,37 @@ function getApiPathPrefix() {
 }
 
 function updateConfigSummary() {
-  if (!hasCompleteConfigFields()) {
-    setConfigSummary('未配置', 'is-unconfigured');
+  el.saveConfigButton.disabled = state.loadingModels;
+  el.saveConfigButton.textContent = state.loadingModels ? '连接测试中' : '测试连接';
+  if (state.configCheckStatus === 'checking') {
+    setConfigSummary('连接测试中', 'is-checking');
     return;
   }
   if (state.configCheckStatus === 'configured') {
-    setConfigSummary('已配置', 'is-configured');
+    setConfigSummary('连接成功', 'is-configured');
     return;
   }
   if (state.configCheckStatus === 'error') {
-    setConfigSummary('配置错误', 'is-error');
+    setConfigSummary(`连接失败：${state.configCheckError}`, 'is-error');
     return;
   }
-  setConfigSummary('未配置', 'is-unconfigured');
+  setConfigSummary(state.configCheckStatus === 'cached' ? '模型已缓存，待测试连接' : '待测试连接', 'is-unconfigured');
 }
 
 function setConfigSummary(text, statusClass) {
   el.configSummary.textContent = text;
-  el.configSummary.classList.remove('is-unconfigured', 'is-configured', 'is-error');
+  el.configSummary.classList.remove('is-unconfigured', 'is-configured', 'is-error', 'is-checking');
   el.configSummary.classList.add(statusClass);
+  el.apiStatusText.textContent = text;
+  el.apiStatus.title = text;
+  el.apiStatus.dataset.state = statusClass;
 }
 
 function markConfigUnchecked() {
+  state.modelLoadRequestId += 1;
+  state.loadingModels = false;
   state.configCheckStatus = 'unconfigured';
+  state.configCheckError = '';
   setApiKeyBalanceNotice(false);
   const currentSignature = hasCompleteConfigFields() ? getConfigSignature() : '';
   const removedCache = clearStaleModelCaches(currentSignature);
@@ -510,7 +529,7 @@ function resetModelSelectsToDefaults() {
   state.responseModelOptions = [];
   state.modelOptionsConfigSignature = '';
   fillModelSelect(el.responseModel, [{ value: DEFAULT_RESPONSE_MODEL, label: DEFAULT_RESPONSE_MODEL }]);
-  el.imageModel.value = DEFAULT_IMAGE_MODEL;
+  fillModelSelect(el.imageModel, [{ value: DEFAULT_IMAGE_MODEL, label: DEFAULT_IMAGE_MODEL }]);
   updateRunSummary();
 }
 
@@ -523,9 +542,6 @@ function updateApiModeUI() {
     const hiddenModes = trimmedStringValue(node.dataset.apiModeHidden).split(/\s+/).filter(Boolean);
     node.classList.toggle('hidden', hiddenModes.includes(state.apiMode));
   });
-  el.imageModel.value = DEFAULT_IMAGE_MODEL;
-  el.imageModel.readOnly = true;
-  el.imageModel.setAttribute('aria-readonly', 'true');
   document.body.dataset.apiMode = state.apiMode;
   updateRunSummary();
 }
@@ -904,19 +920,19 @@ function updatePromptMeta() {
   const length = Array.from(trimmedStringValue(el.prompt.value)).length;
   el.promptCount.textContent = `${length.toLocaleString('zh-CN')} 字`;
   el.clearPromptButton.disabled = length === 0;
+  document.body.classList.toggle('has-prompt', length > 0);
   updateRunSummary();
 }
 
 function updateRunSummary() {
-  const modeLabel = state.mode === 'generate' ? '文生图' : state.mode === 'mask' ? '遮罩改图' : '图生图';
+  const modeLabel = state.mode === 'generate' ? '文生图' : state.mode === 'mask' ? '局部重绘' : '图生图';
   const apiModeLabel = getApiModeLabel();
   const size = getCurrentSizeDisplay();
-  const format = resolveOutputFormatValue().toUpperCase();
-  const quality = el.quality.value ? `质量 ${el.quality.value}` : '默认质量';
   const streamPart = state.apiMode === 'images' ? ` · ${getImageStreamModeLabel()}` : '';
   const sourcePart = state.mode === 'generate' ? '' : ` · ${state.sourceImages.length} 张源图`;
-  const summary = `${apiModeLabel} · ${modeLabel} · ${size} · ${format} · ${quality}${streamPart}${sourcePart}`;
+  const summary = `${apiModeLabel} · ${modeLabel} · ${size} · PNG · 默认质量${streamPart}${sourcePart}`;
   el.submitSummary.textContent = state.submitting ? `正在生成：${summary}` : `准备生成：${summary}`;
+  updateSubmitButton();
 }
 
 function getCurrentSizeDisplay() {
@@ -949,13 +965,14 @@ function updateSizeSummary() {
   el.sizeSummary.textContent = `当前输出：${width}x${height}，${ratio} ${orientation}，约 ${megapixels} 百万像素。`;
 }
 
-async function loadModels() {
+async function loadModels({ force = false } = {}) {
   if (state.loadingModels) return;
   const apiKey = getApiKey();
   if (!hasCompleteConfigFields()) {
-    state.configCheckStatus = 'unconfigured';
+    state.configCheckStatus = 'error';
+    state.configCheckError = !getApiBaseUrl() ? '请填写 API URL。' : '请填写 API Key。';
     updateConfigSummary();
-    showToast('请填写 API URL 和 API Key。', 'warning', 6000);
+    showToast(state.configCheckError, 'warning', 6000);
     return;
   }
   setApiKeyBalanceNotice(false);
@@ -963,21 +980,27 @@ async function loadModels() {
   const requestId = ++state.modelLoadRequestId;
   const requestConfigSignature = getConfigSignature();
   clearStaleModelCaches(requestConfigSignature);
-  const cachedModels = readCachedModelList(requestConfigSignature);
+  if (force) localStorage.removeItem(MODEL_LIST_CACHE_KEY);
+  const cachedModels = force ? null : readCachedModelList(requestConfigSignature);
   if (cachedModels) {
     applyLoadedModelOptions(cachedModels, requestConfigSignature, true);
     return;
   }
 
   state.loadingModels = true;
+  state.configCheckStatus = 'checking';
+  state.configCheckError = '';
+  updateConfigSummary();
 
   try {
     const response = await fetch(buildApiUrl('/models'), {
+      cache: force ? 'no-store' : 'default',
       headers: {
         Authorization: `Bearer ${apiKey}`
       }
     });
     const responseText = await response.text();
+    if (requestId !== state.modelLoadRequestId || requestConfigSignature !== getConfigSignature()) return;
     if (extractImagesErrorCode(responseText) === 'INSUFFICIENT_BALANCE') {
       setApiKeyBalanceNotice(true);
       throw new Error('该API Key所剩余额不足');
@@ -997,22 +1020,24 @@ async function loadModels() {
       throw new Error('该API Key所剩余额不足');
     }
 
+    if (!Array.isArray(payload) && !Array.isArray(payload?.data)) {
+      throw new Error('接口未返回有效的模型列表。');
+    }
     const allModels = normalizeOpenAIModelOptions(payload);
-    if (requestId !== state.modelLoadRequestId) return;
-    if (requestConfigSignature !== getConfigSignature()) return;
     writeModelListCache(requestConfigSignature, allModels);
     applyLoadedModelOptions(allModels, requestConfigSignature, false);
-    showToast('模型加载完成', 'success');
+    showToast('连接成功，模型列表已更新', 'success');
   } catch (error) {
     if (requestId !== state.modelLoadRequestId) return;
     if (requestConfigSignature !== getConfigSignature()) return;
     state.configCheckStatus = 'error';
+    state.configCheckError = extractErrorMessage(error, '连接失败');
     updateConfigSummary();
-    const message = extractErrorMessage(error, '加载模型失败');
-    showToast(message, 'error', 6000);
+    showToast(state.configCheckError, 'error', 6000);
   } finally {
     if (requestId === state.modelLoadRequestId) {
       state.loadingModels = false;
+      updateConfigSummary();
     }
   }
 }
@@ -1028,6 +1053,7 @@ function fillModelSelect(select, options) {
 }
 
 function applyLoadedModelOptions(allModels, configSignature, fromCache) {
+  const selectedImageModel = resolveImageModelValue();
   const responseModels = allModels.filter((option) => !isImageGenerationModelId(option.value));
   const imageModels = allModels.filter((option) => option.value.toLowerCase().startsWith('gpt-image'));
   state.responseModelOptions = responseModels.length > 0
@@ -1038,11 +1064,11 @@ function applyLoadedModelOptions(allModels, configSignature, fromCache) {
   fillModelSelect(el.imageModel, imageModels.length > 0
     ? imageModels
     : [{ value: DEFAULT_IMAGE_MODEL, label: DEFAULT_IMAGE_MODEL }]);
-  setModelControlValue('image', resolveImageModelValue());
+  setModelControlValue('image', selectedImageModel);
   setModelControlValue('response', resolvePreferredResponseModelValue(state.responseModelOptions, configSignature));
   updateRunSummary();
 
-  state.configCheckStatus = 'configured';
+  state.configCheckStatus = fromCache ? 'cached' : 'configured';
   updateConfigSummary();
 }
 
@@ -1244,15 +1270,19 @@ function updateModeUI() {
   });
 
   const isGenerate = state.mode === 'generate';
-  el.sourcePanel.classList.toggle('visible', !isGenerate);
+  document.body.dataset.mode = state.mode;
+  el.sourcePanel.classList.add('visible');
   el.sourcePanel.classList.remove('drag-over');
-  el.sourcePanel.setAttribute('aria-disabled', isGenerate ? 'true' : 'false');
+  el.sourcePanel.setAttribute('aria-disabled', 'false');
   el.maskPanel.classList.toggle('visible', state.mode === 'mask' && state.sourceImages.length > 0);
   el.sourceFileInput.multiple = state.mode === 'edit';
 
   if (state.mode === 'generate') {
-    el.prompt.placeholder = '例如：高级产品摄影风格的玻璃香水瓶，浅灰背景。';
+    el.prompt.placeholder = '请输入你想生成的图像描述，\n例如：一只可爱的猫咪在阳光下的窗台上，\n风格：清新、真实、摄影风格';
     el.promptHint.textContent = '建议描述主体、风格、镜头和背景，效果会更稳定。';
+    el.sourceTitle.textContent = '参考图（可选）';
+    el.sourceHint.textContent = '上传图片作为生成参考，可选。';
+    setSourceEmptyCopy('拖拽图片到此处，或点击上传', '支持 JPG、PNG、WEBP，最大 10MB');
   } else if (state.mode === 'mask') {
     el.prompt.placeholder = '例如：把遮罩区域改成蓝色针织毛衣。';
     el.promptHint.textContent = '红色绘制区域会作为透明遮罩提交，表示希望模型修改的区域。';
@@ -1281,7 +1311,14 @@ function setSourceEmptyCopy(title, description) {
 }
 
 function updateSizeUI() {
-  el.customSizePanel.classList.toggle('visible', el.size.value === CUSTOM_SIZE_VALUE);
+  const dimensions = parseSizeValue(el.size.value);
+  if (dimensions) {
+    el.customSizeWidth.value = dimensions.width;
+    el.customSizeHeight.value = dimensions.height;
+  }
+  document.querySelectorAll('[data-size-preset]').forEach((button) => {
+    button.classList.toggle('active', button.dataset.sizePreset === el.size.value);
+  });
   updateSizeSummary();
   updateRunSummary();
 }
@@ -1293,12 +1330,21 @@ function handleSourceImagesChange(event) {
 }
 
 function openSourceFilePicker() {
-  if (state.mode === 'generate') return;
   el.sourceFileInput.click();
 }
 
+function clearCanvas() {
+  if (state.resultImages.length === 0) return;
+  state.resultImages = [];
+  state.restoredFromCache = false;
+  state.activeHistoryId = '';
+  state.lastSavedAt = '';
+  state.lastDurationMs = null;
+  renderResults();
+  renderHistory();
+}
+
 function handleSourceDragOver(event) {
-  if (state.mode === 'generate') return;
   event.preventDefault();
   event.dataTransfer.dropEffect = 'copy';
   el.sourcePanel.classList.add('drag-over');
@@ -1311,14 +1357,12 @@ function handleSourceDragLeave(event) {
 }
 
 function handleSourceDrop(event) {
-  if (state.mode === 'generate') return;
   event.preventDefault();
   el.sourcePanel.classList.remove('drag-over');
   addSourceFiles(Array.from(event.dataTransfer?.files || []));
 }
 
 function handleSourcePaste(event) {
-  if (state.mode === 'generate') return;
   const files = Array.from(event.clipboardData?.files || []);
   if (files.length === 0) return;
   event.preventDefault();
@@ -1326,7 +1370,7 @@ function handleSourcePaste(event) {
 }
 
 function handleGlobalPaste(event) {
-  if (event.defaultPrevented || state.mode === 'generate') return;
+  if (event.defaultPrevented) return;
   const files = Array.from(event.clipboardData?.files || []);
   if (files.length === 0) return;
   event.preventDefault();
@@ -1482,12 +1526,12 @@ function resetForm() {
   state.mode = 'generate';
   state.apiMode = PAGE_OPTIONS.apiMode;
   el.prompt.value = '';
+  el.imageCount.value = DEFAULT_IMAGE_COUNT;
   setModelControlValue('response', DEFAULT_RESPONSE_MODEL);
-  el.imageModel.value = DEFAULT_IMAGE_MODEL;
+  setModelControlValue('image', DEFAULT_IMAGE_MODEL);
   el.size.value = DEFAULT_SIZE;
   el.customSizeWidth.value = DEFAULT_CUSTOM_SIZE_WIDTH;
   el.customSizeHeight.value = DEFAULT_CUSTOM_SIZE_HEIGHT;
-  applyAdvancedSettings(createDefaultAdvancedSettings());
   state.submitError = '';
   state.resultImages = [];
   state.restoredFromCache = false;
@@ -1508,6 +1552,7 @@ function resetForm() {
 }
 
 async function submitGeneration() {
+  if (state.submitting) return;
   const validationError = validateGenerationForm();
   if (validationError) {
     showToast(validationError, 'warning', 6000);
@@ -1515,6 +1560,7 @@ async function submitGeneration() {
   }
 
   const startedAt = performance.now();
+  const requestedCount = readImageCount();
   saveConfig({ loadModelsAfterSave: false });
   state.submitError = '';
   state.resultImages = [];
@@ -1558,6 +1604,9 @@ async function submitGeneration() {
     renderResults();
     renderHistory();
     showToast(`已生成 ${images.length} 张图片，耗时 ${formatDuration(state.lastDurationMs)}`, 'success');
+    if (images.length !== requestedCount) {
+      showToast(`请求 ${requestedCount} 张，接口实际返回 ${images.length} 张。`, 'warning', 8000);
+    }
     showToast(
       saved
         ? '请尽快下载图片或复制链接保存，浏览器历史只会临时保留最近 10 次。'
@@ -1587,10 +1636,27 @@ async function submitGeneration() {
   }
 }
 
+function readImageCount(value = el.imageCount.value) {
+  const count = parseIntegerString(value);
+  return count !== null && count >= 1 && count <= MAX_IMAGE_COUNT ? count : null;
+}
+
+function changeImageCount(delta) {
+  if (state.submitting) return;
+  el.imageCount.value = clampNumber((readImageCount() ?? DEFAULT_IMAGE_COUNT) + delta, 1, MAX_IMAGE_COUNT);
+  updateRunSummary();
+  markRestoredDirty();
+}
+
 function updateSubmitButton() {
-  el.submitButton.textContent = state.submitting ? '取消请求' : '开始生成';
+  const count = readImageCount();
+  const label = count > 1 ? `开始生成（${count} 张）` : '开始生成';
+  el.submitButton.textContent = state.submitting ? '取消请求' : label;
   el.submitButton.classList.toggle('btn-primary', !state.submitting);
   el.submitButton.classList.toggle('btn-danger', state.submitting);
+  el.imageCount.disabled = state.submitting;
+  el.decreaseImageCountButton.disabled = state.submitting || count === 1;
+  el.increaseImageCountButton.disabled = state.submitting || count === MAX_IMAGE_COUNT;
 }
 
 function cancelGeneration() {
@@ -1605,29 +1671,24 @@ function cancelGeneration() {
 }
 
 function validateGenerationForm() {
+  if (readImageCount() === null) return '生成数量必须为 1–10 的整数。';
   if (!getApiBaseUrl()) return '请填写 API URL。';
   if (!getApiKey()) return '请填写 API Key。';
   if (state.loadingModels) return '正在加载模型，请稍后再试。';
   if (state.apiMode === 'responses' && !trimmedStringValue(el.responseModel.value)) return '请选择或输入 Responses 模型。';
   if (!trimmedStringValue(el.prompt.value)) return '请输入提示词。';
   if (state.mode !== 'generate' && state.sourceImages.length === 0) {
-    return state.mode === 'mask' ? '遮罩编辑模式需要上传一张原始图片。' : '图生图模式至少需要上传一张源图。';
+    return state.mode === 'mask' ? '局部重绘模式需要上传一张原始图片。' : '图生图模式至少需要上传一张源图。';
   }
   if (state.mode === 'mask' && !state.maskHasDrawing) return '请先在原始图片上绘制需要修改的遮罩区域。';
   if (state.sourceImages.some((preview) => !isSupportedImageFile(preview.file))) return '仅支持 PNG、JPEG、WebP 图片。';
   const sizeError = validateCustomSize();
   if (sizeError) return sizeError;
-  const compressionValue = trimmedStringValue(el.outputCompression.value);
-  if (compressionValue) {
-    const compression = parseIntegerString(compressionValue);
-    if (compression === null || compression < 0 || compression > 100) {
-      return '输出压缩必须是 0 到 100 之间的整数。';
-    }
-  }
   return '';
 }
 
 async function buildGenerationRequest() {
+  if (readImageCount() === null) throw new Error('生成数量必须为 1–10 的整数。');
   if (state.apiMode === 'images') return buildImagesApiRequest();
   return buildResponsesApiRequest();
 }
@@ -1720,12 +1781,9 @@ async function buildImagesEditFormData() {
 }
 
 function appendImagesPayloadOptions(payload) {
-  const quality = resolveImagesQualityValue();
-  const outputFormat = resolveOutputFormatValue();
-  const compression = resolveOutputCompressionForFormat(outputFormat);
-  if (quality) payload.quality = quality;
-  if (outputFormat) payload.output_format = outputFormat;
-  if (compression !== null) payload.output_compression = compression;
+  payload.n = readImageCount();
+  payload.quality = 'auto';
+  payload.output_format = 'png';
   payload.response_format = FIXED_RESPONSE_FORMAT;
   payload.moderation = 'low';
   return payload;
@@ -1738,12 +1796,9 @@ function appendImagesStreamPayloadOptions(payload) {
 }
 
 function appendImagesFormDataOptions(formData) {
-  const quality = resolveImagesQualityValue();
-  const outputFormat = resolveOutputFormatValue();
-  const compression = resolveOutputCompressionForFormat(outputFormat);
-  if (quality) formData.append('quality', quality);
-  if (outputFormat) formData.append('output_format', outputFormat);
-  if (compression !== null) formData.append('output_compression', String(compression));
+  formData.append('n', String(readImageCount()));
+  formData.append('quality', 'auto');
+  formData.append('output_format', 'png');
   formData.append('response_format', FIXED_RESPONSE_FORMAT);
   formData.append('moderation', 'low');
 
@@ -1758,28 +1813,18 @@ function appendImagesStreamFormDataOptions(formData) {
   if (streaming) formData.append('partial_images', String(FIXED_PARTIAL_IMAGES));
 }
 
-function resolveImagesQualityValue() {
-  return trimmedStringValue(el.quality.value) || 'auto';
-}
-
 async function buildResponsesPayload() {
-  const outputFormat = resolveOutputFormatValue();
-  const reasoningEffort = resolveReasoningEffortValue();
   const tool = {
     type: 'image_generation',
     model: resolveImageModelValue(),
     action: state.mode === 'mask' ? 'edit' : 'generate',
     size: resolveSizeValue(),
-    quality: el.quality.value || 'auto',
-    output_format: outputFormat,
+    quality: 'auto',
+    output_format: 'png',
     response_format: FIXED_RESPONSE_FORMAT,
     moderation: 'low',
     partial_images: FIXED_PARTIAL_IMAGES
   };
-
-  if (outputFormat === 'jpeg' || outputFormat === 'webp') {
-    tool.output_compression = normalizeOutputCompression(el.outputCompression.value) ?? DEFAULT_OUTPUT_COMPRESSION;
-  }
 
   if (state.mode !== 'generate' && !isInputFidelityUnsupportedImageModel()) {
     tool.input_fidelity = DEFAULT_INPUT_FIDELITY;
@@ -1818,7 +1863,7 @@ async function buildResponsesPayload() {
     ],
     tools: [tool],
     tool_choice: { type: 'image_generation' },
-    reasoning: { effort: reasoningEffort },
+    reasoning: { effort: DEFAULT_REASONING_EFFORT },
     store: false,
     stream: true
   };
@@ -1843,20 +1888,6 @@ async function consumeImageGenerationJsonResponse(response) {
   return images;
 }
 
-function resolveOutputFormatValue() {
-  return trimmedStringValue(el.outputFormat.value) || 'png';
-}
-
-function resolveOutputCompressionForFormat(format) {
-  const normalized = trimmedStringValue(format);
-  if (normalized !== 'jpeg' && normalized !== 'webp') return null;
-  return normalizeOutputCompression(el.outputCompression.value) ?? DEFAULT_OUTPUT_COMPRESSION;
-}
-
-function resolveReasoningEffortValue() {
-  return normalizeReasoningEffort(el.reasoningEffort.value);
-}
-
 function shouldUseImagesStream() {
   return false;
 }
@@ -1870,7 +1901,7 @@ function isInputFidelityUnsupportedImageModel() {
 }
 
 function resolveImageModelValue() {
-  return DEFAULT_IMAGE_MODEL;
+  return trimmedStringValue(el.imageModel.value) || DEFAULT_IMAGE_MODEL;
 }
 
 function resolveSizeValue() {
@@ -2119,7 +2150,7 @@ function streamImageCandidateKey(url, b64, fallback) {
 
 function createStreamResultImage(candidate, index, isPartial) {
   if (!candidate) return null;
-  const outputFormat = trimmedStringValue(candidate.outputFormat) || resolveOutputFormatValue();
+  const outputFormat = trimmedStringValue(candidate.outputFormat) || 'png';
   const mimeType = resolveMimeType(outputFormat);
   const url = normalizeStreamImageUrl(candidate, mimeType);
   if (!url) return null;
@@ -2506,7 +2537,7 @@ function renderResults() {
   if (state.resultImages.length === 0) {
     const box = document.createElement('div');
     box.className = 'state-box';
-    box.innerHTML = '<div class="state-title">还没有生成结果</div><div>填写提示词并确认配置后即可生成。</div>';
+    box.innerHTML = '<div class="empty-art" aria-hidden="true"></div><div class="state-title">还没有生成图像</div><div>在左侧填写提示词并设置参数，点击下方按钮开始生成<br>让 AI 帮你把想法变成精彩的图像吧！</div>';
     el.resultBody.appendChild(box);
     return;
   }
@@ -2594,7 +2625,7 @@ function createResultCard(image, index) {
   const maskReference = document.createElement('button');
   maskReference.className = 'btn btn-sm result-reference-button';
   maskReference.type = 'button';
-  maskReference.textContent = '作为图生图（遮罩）参考图';
+  maskReference.textContent = '作为局部重绘参考图';
   maskReference.disabled = state.submitting || image.isPartial;
   maskReference.addEventListener('click', () => useResultAsSourceReference(image, index, 'mask', maskReference));
   actions.append(download, editReference, maskReference);
@@ -2632,7 +2663,7 @@ async function useResultAsSourceReference(image, index, mode, button) {
     updateModeUI();
     renderSourceImages();
     markRestoredDirty();
-    showToast(mode === 'mask' ? '已作为图生图（遮罩）参考图' : '已作为图生图参考图', 'success');
+    showToast(mode === 'mask' ? '已作为局部重绘参考图' : '已作为图生图参考图', 'success');
   } catch (error) {
     showToast(extractErrorMessage(error, '无法将结果图片作为参考图'), 'error', 6000);
   } finally {
@@ -2694,6 +2725,7 @@ function createCachedResultPayload(savedAt, results, durationMs) {
 
 function captureCurrentForm() {
   return {
+    count: readImageCount() ?? DEFAULT_IMAGE_COUNT,
     apiMode: state.apiMode,
     mode: state.mode,
     prompt: stringValue(el.prompt.value),
@@ -2702,12 +2734,7 @@ function captureCurrentForm() {
     size: stringValue(el.size.value),
     customSizeWidth: stringValue(el.customSizeWidth.value),
     customSizeHeight: stringValue(el.customSizeHeight.value),
-    quality: stringValue(el.quality.value),
-    reasoningEffort: stringValue(el.reasoningEffort.value),
-    outputFormat: stringValue(el.outputFormat.value),
-    outputCompression: stringValue(el.outputCompression.value),
-    imageStreamMode: DEFAULT_IMAGE_STREAM_MODE,
-    advancedOpen: el.advancedDetails.open
+    imageStreamMode: DEFAULT_IMAGE_STREAM_MODE
   };
 }
 
@@ -2816,6 +2843,7 @@ function toPlainHistoryEntry(entry) {
     savedAt: entry.savedAt,
     durationMs: normalizeDurationMs(entry.durationMs),
     form: {
+      count: entry.form.count,
       apiMode: entry.form.apiMode,
       mode: entry.form.mode,
       prompt: entry.form.prompt,
@@ -2824,12 +2852,7 @@ function toPlainHistoryEntry(entry) {
       size: entry.form.size,
       customSizeWidth: entry.form.customSizeWidth,
       customSizeHeight: entry.form.customSizeHeight,
-      quality: entry.form.quality,
-      reasoningEffort: entry.form.reasoningEffort,
-      outputFormat: entry.form.outputFormat,
-      outputCompression: entry.form.outputCompression,
-      imageStreamMode: entry.form.imageStreamMode,
-      advancedOpen: entry.form.advancedOpen
+      imageStreamMode: entry.form.imageStreamMode
     },
     results: entry.results.map((image) => ({
       url: image.url,
@@ -2869,6 +2892,7 @@ function normalizeCachedForm(value) {
   const storedMode = stringValue(value.mode);
   const normalizedSize = normalizeCachedSizeSettings(value);
   return {
+    count: readImageCount(value.count ?? DEFAULT_IMAGE_COUNT) ?? DEFAULT_IMAGE_COUNT,
     apiMode: normalizeApiMode(value.apiMode),
     mode: storedMode === 'edit' || storedMode === 'mask' ? storedMode : 'generate',
     prompt: stringValue(value.prompt),
@@ -2877,12 +2901,7 @@ function normalizeCachedForm(value) {
     size: normalizedSize.size,
     customSizeWidth: normalizedSize.customSizeWidth,
     customSizeHeight: normalizedSize.customSizeHeight,
-    quality: normalizeOptionValue(stringValue(value.quality), ['', 'low', 'medium', 'high']),
-    reasoningEffort: normalizeReasoningEffort(value.reasoningEffort),
-    outputFormat: normalizeOptionValue(stringValue(value.outputFormat), ['', 'png', 'jpeg', 'webp']),
-    outputCompression: stringValue(value.outputCompression),
-    imageStreamMode: normalizeImageStreamMode(value.imageStreamMode),
-    advancedOpen: value.advancedOpen === true
+    imageStreamMode: normalizeImageStreamMode(value.imageStreamMode)
   };
 }
 
@@ -2995,62 +3014,68 @@ function renderHistory() {
 }
 
 function createHistoryButton(entry) {
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = `history-item${state.activeHistoryId === entry.id ? ' active' : ''}`;
-  button.addEventListener('click', () => restoreHistoryEntry(entry));
+  const card = document.createElement('div');
+  card.className = `history-item${state.activeHistoryId === entry.id ? ' active' : ''}`;
+  card.setAttribute('role', 'button');
+  card.setAttribute('tabindex', '0');
+  card.setAttribute('aria-label', `恢复历史记录：${entry.title || entry.form.prompt?.split('，')[0] || '未命名图片'}`);
+  card.addEventListener('click', (event) => {
+    if (event.target.closest('.history-delete')) return;
+    restoreHistoryEntry(entry);
+  });
+  card.addEventListener('keydown', (event) => {
+    if (event.target !== card || (event.key !== 'Enter' && event.key !== ' ')) return;
+    event.preventDefault();
+    restoreHistoryEntry(entry);
+  });
 
-  const top = document.createElement('div');
-  top.className = 'history-top';
+  const thumb = document.createElement('img');
+  thumb.className = 'history-cover';
+  thumb.src = entry.results[0]?.url || '';
+  thumb.alt = entry.title || '历史图片';
+
   const textWrap = document.createElement('div');
-  textWrap.style.minWidth = '0';
+  textWrap.className = 'history-copy';
+  const title = document.createElement('div');
+  title.className = 'history-title truncate';
+  title.textContent = entry.title || entry.form.prompt?.split('，')[0] || '未命名图片';
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'history-delete';
+  remove.setAttribute('aria-label', `删除历史记录：${entry.title || '未命名图片'}`);
+  remove.title = '删除历史记录';
+  remove.innerHTML = '<svg class="icon" aria-hidden="true"><use href="#icon-trash"/></svg>';
+  remove.addEventListener('click', (event) => deleteHistoryEntry(entry, event));
+  title.appendChild(remove);
+  const prompt = document.createElement('div');
+  prompt.className = 'history-prompt truncate';
+  prompt.textContent = entry.description || entry.form.prompt || '未记录提示词';
   const time = document.createElement('div');
   time.className = 'history-time truncate';
   time.textContent = formatHistoryTime(entry.savedAt);
-  const meta = document.createElement('div');
-  meta.className = 'history-meta truncate';
-  meta.textContent = formatHistoryMeta(entry);
-  textWrap.append(time, meta);
-  const badges = document.createElement('div');
-  badges.className = 'history-badges';
-  const count = document.createElement('span');
-  count.className = 'pill';
-  count.textContent = `${entry.results.length} 张`;
-  badges.appendChild(count);
-  const duration = formatDuration(entry.durationMs);
-  if (duration) {
-    const durationPill = document.createElement('span');
-    durationPill.className = 'pill';
-    durationPill.textContent = `耗时 ${duration}`;
-    badges.appendChild(durationPill);
+  textWrap.append(title, prompt, time);
+  card.append(thumb, textWrap);
+  return card;
+}
+
+async function deleteHistoryEntry(entry, event) {
+  event?.stopPropagation();
+  const title = entry.title || entry.form.prompt?.split('，')[0] || '未命名图片';
+  if (!window.confirm(`删除历史记录“${title}”？`)) return;
+
+  state.history = state.history.filter((item) => item.id !== entry.id);
+  if (state.activeHistoryId === entry.id) {
+    state.activeHistoryId = '';
+    state.resultImages = [];
+    state.restoredFromCache = false;
+    state.lastSavedAt = '';
+    state.lastDurationMs = null;
+    state.submitError = '';
+    renderResults();
   }
-  top.append(textWrap, badges);
-  button.appendChild(top);
-
-  const prompt = document.createElement('div');
-  prompt.className = 'history-prompt truncate';
-  prompt.textContent = entry.form.prompt || '未记录提示词';
-  button.appendChild(prompt);
-
-  const thumbs = document.createElement('div');
-  thumbs.className = 'history-thumbs';
-  entry.results.slice(0, 4).forEach((image, index) => {
-    const thumb = document.createElement('div');
-    thumb.className = 'history-thumb';
-    const img = document.createElement('img');
-    img.src = image.url;
-    img.alt = `history-image-${index + 1}`;
-    thumb.appendChild(img);
-    if (index === 3 && entry.results.length > 4) {
-      const more = document.createElement('div');
-      more.className = 'history-more';
-      more.textContent = `+${entry.results.length - 4}`;
-      thumb.appendChild(more);
-    }
-    thumbs.appendChild(thumb);
-  });
-  button.appendChild(thumbs);
-  return button;
+  await persistImageHistory();
+  renderHistory();
+  showToast('已删除历史记录', 'success');
 }
 
 function restoreHistoryEntry(entry) {
@@ -3061,16 +3086,18 @@ function restoreHistoryEntry(entry) {
   state.apiMode = PAGE_OPTIONS.apiMode;
   state.mode = entry.form.mode;
   el.prompt.value = entry.form.prompt;
+  el.imageCount.value = readImageCount(entry.form.count ?? DEFAULT_IMAGE_COUNT) ?? DEFAULT_IMAGE_COUNT;
   setModelControlValue('response', entry.form.responseModel);
-  el.imageModel.value = DEFAULT_IMAGE_MODEL;
+  const model = entry.form.model || DEFAULT_IMAGE_MODEL;
+  if (!Array.from(el.imageModel.options).some((option) => option.value === model)) {
+    const option = document.createElement('option');
+    option.value = option.textContent = model;
+    el.imageModel.appendChild(option);
+  }
+  el.imageModel.value = model;
   el.size.value = entry.form.size;
   el.customSizeWidth.value = entry.form.customSizeWidth;
   el.customSizeHeight.value = entry.form.customSizeHeight;
-  el.quality.value = entry.form.quality;
-  el.reasoningEffort.value = entry.form.reasoningEffort;
-  el.outputFormat.value = entry.form.outputFormat;
-  el.outputCompression.value = entry.form.outputCompression;
-  el.advancedDetails.open = entry.form.advancedOpen;
   state.resultImages = [...entry.results];
   state.restoredFromCache = true;
   state.lastSavedAt = entry.savedAt;
@@ -3115,14 +3142,19 @@ function markRestoredDirty() {
 
 function formatHistoryTime(value) {
   try {
-    return new Date(value).toLocaleString('zh-CN');
+    const date = new Date(value);
+    if (!Number.isNaN(date.getTime())) {
+      const pad = (part) => String(part).padStart(2, '0');
+      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+    }
+    return value;
   } catch {
     return value;
   }
 }
 
 function formatHistoryMeta(entry) {
-  const modeLabel = entry.form.mode === 'generate' ? '文生图' : entry.form.mode === 'mask' ? '图生图（遮罩）' : '图生图';
+  const modeLabel = entry.form.mode === 'generate' ? '文生图' : entry.form.mode === 'mask' ? '局部重绘' : '图生图';
   const apiModeLabel = normalizeApiMode(entry.form.apiMode) === 'images' ? 'Images API' : 'Responses API';
   const responseModel = entry.form.responseModel || DEFAULT_RESPONSE_MODEL;
   const imageModel = entry.form.model || DEFAULT_IMAGE_MODEL;
@@ -3365,76 +3397,8 @@ function handleGlobalKeydown(event) {
   if (state.maskEditorExpanded) exitMaskEditorFullscreen();
 }
 
-function restoreAdvancedSettings() {
-  let parsed = null;
-  try {
-    parsed = JSON.parse(localStorage.getItem(ADVANCED_CACHE_KEY) || 'null');
-  } catch {
-    localStorage.removeItem(ADVANCED_CACHE_KEY);
-  }
-  applyAdvancedSettings(parsed ? normalizeAdvancedSettings(parsed) : createDefaultAdvancedSettings());
-}
-
-function applyAdvancedSettings(settings) {
-  el.quality.value = settings.quality;
-  el.reasoningEffort.value = settings.reasoningEffort;
-  el.outputFormat.value = settings.outputFormat;
-  el.outputCompression.value = settings.outputCompression;
-  el.advancedDetails.open = settings.advancedOpen;
-}
-
-function persistAdvancedSettings() {
-  const payload = {
-    quality: stringValue(el.quality.value),
-    reasoningEffort: stringValue(el.reasoningEffort.value),
-    outputFormat: stringValue(el.outputFormat.value),
-    outputCompression: stringValue(el.outputCompression.value),
-    imageStreamMode: DEFAULT_IMAGE_STREAM_MODE,
-    advancedOpen: el.advancedDetails.open
-  };
-  localStorage.setItem(ADVANCED_CACHE_KEY, JSON.stringify(payload));
-  updateRunSummary();
-  markRestoredDirty();
-}
-
-function normalizeAdvancedSettings(value) {
-  if (!isRecord(value)) return createDefaultAdvancedSettings();
-  return {
-    quality: normalizeOptionValue(stringValue(value.quality), ['', 'low', 'medium', 'high']),
-    reasoningEffort: normalizeReasoningEffort(value.reasoningEffort),
-    outputFormat: normalizeOptionValue(stringValue(value.outputFormat), ['', 'png', 'jpeg', 'webp']),
-    outputCompression: stringValue(value.outputCompression),
-    imageStreamMode: normalizeImageStreamMode(value.imageStreamMode),
-    advancedOpen: value.advancedOpen === true
-  };
-}
-
-function createDefaultAdvancedSettings() {
-  return {
-    quality: '',
-    reasoningEffort: DEFAULT_REASONING_EFFORT,
-    outputFormat: '',
-    outputCompression: '',
-    imageStreamMode: DEFAULT_IMAGE_STREAM_MODE,
-    advancedOpen: false
-  };
-}
-
 function normalizeImageStreamMode(value) {
   return DEFAULT_IMAGE_STREAM_MODE;
-}
-
-function normalizeNonNegativeInt(value) {
-  if (!trimmedStringValue(value)) return null;
-  const parsed = parseIntegerString(value);
-  if (parsed === null || parsed < 0) return null;
-  return parsed;
-}
-
-function normalizeOutputCompression(value) {
-  const parsed = normalizeNonNegativeInt(value);
-  if (parsed === null || parsed > 100) return null;
-  return parsed;
 }
 
 function parseIntegerString(value) {
@@ -3545,15 +3509,6 @@ function isQuotaExceededError(error) {
     error.code === 22 ||
     error.code === 1014
   );
-}
-
-function normalizeOptionValue(value, allowedValues) {
-  return allowedValues.includes(value) ? value : allowedValues[0];
-}
-
-function normalizeReasoningEffort(value) {
-  const normalized = trimmedStringValue(value);
-  return REASONING_EFFORT_VALUES.includes(normalized) ? normalized : DEFAULT_REASONING_EFFORT;
 }
 
 function isRecord(value) {
