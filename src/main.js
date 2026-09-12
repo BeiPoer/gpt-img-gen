@@ -2576,20 +2576,6 @@ function createResultCard(image, index) {
 
   const body = document.createElement('div');
   body.className = 'result-body';
-  const meta = document.createElement('div');
-  meta.className = 'result-meta';
-  const nameWrap = document.createElement('div');
-  nameWrap.style.minWidth = '0';
-  const mime = document.createElement('div');
-  mime.className = 'hint';
-  mime.textContent = image.mimeType;
-  nameWrap.append(mime);
-  const pill = document.createElement('span');
-  pill.className = 'pill';
-  pill.textContent = `#${index + 1}`;
-  meta.append(nameWrap, pill);
-  body.appendChild(meta);
-
   if (image.isPartial) {
     const partial = document.createElement('span');
     partial.className = 'pill partial';
