@@ -930,8 +930,12 @@ details.config-details > summary p {
 }
 
 .result-reference-button {
-  flex: 1 1 100%;
+  flex: 1 1 auto;
   white-space: nowrap;
+}
+
+.result-body > .toolbar {
+  flex-wrap: nowrap;
 }
 
 .result-meta {
