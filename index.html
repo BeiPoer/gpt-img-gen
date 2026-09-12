@@ -19,6 +19,7 @@
   <symbol id="icon-eye" viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></symbol>
   <symbol id="icon-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="5"/><path d="M3 22v-2a9 7 0 0 1 18 0v2"/></symbol>
   <symbol id="icon-upload" viewBox="0 0 24 24"><path d="M12 16V3m-5 5 5-5 5 5M4 14v7h16v-7"/></symbol>
+  <symbol id="icon-download" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M4 18v3h16v-3"/></symbol>
 </svg>
 <div class="toast-host" id="toastHost" aria-live="polite"></div>
 
@@ -31,6 +32,12 @@
   <main class="shell">
     <section class="panel form-panel" aria-label="生图表单">
       <div class="form-heading"><svg class="icon"><use href="#icon-sliders"/></svg><h2>创作设置</h2></div>
+      <div class="provider-field">
+        <div class="segmented provider-segmented" id="imageProvider" role="tablist" aria-label="生图服务">
+          <button class="segment active" type="button" role="tab" aria-selected="true" data-provider="gpt">GPT</button>
+          <button class="segment" type="button" role="tab" aria-selected="false" data-provider="banana">Banana</button>
+        </div>
+      </div>
       <div class="form-content">
       <div class="section config-section">
         <details class="config-details" id="configDetails" open>
@@ -63,7 +70,7 @@
 
             <div class="action-row">
               <span class="hint config-summary is-unconfigured" id="configSummary">待测试连接</span>
-              <button class="btn btn-sm" id="saveConfigButton" type="button">测试连接</button>
+              <button class="btn btn-sm" id="saveConfigButton" type="button">保存</button>
             </div>
           </div>
         </details>
@@ -87,10 +94,13 @@
             </select>
           </div>
           <div class="field">
-            <label for="imageModel">图片模型</label>
+            <label for="imageModel">模型</label>
+            <div class="model-select-row">
             <select class="select" id="imageModel">
               <option value="gpt-image-2">gpt-image-2</option>
             </select>
+            <button class="btn btn-sm model-refresh-button" id="refreshImageModelsButton" type="button" aria-label="刷新模型列表" title="刷新模型列表">↻</button>
+            </div>
           </div>
         </div>
         <div class="field prompt-field">
@@ -164,7 +174,35 @@
         </div>
       </div>
 
-      <div class="section size-section">
+      <div class="section hidden" id="bananaSettings">
+        <div class="field">
+          <span class="label size-label">宽高比</span>
+          <input type="hidden" id="bananaAspectRatio" value="1:1">
+          <div class="size-presets banana-ratio-presets" role="group" aria-label="Banana 图片宽高比">
+            <button type="button" class="size-preset" data-banana-ratio="auto">自动</button>
+            <button type="button" class="size-preset active" data-banana-ratio="1:1">1:1</button>
+            <button type="button" class="size-preset" data-banana-ratio="2:3">2:3</button>
+            <button type="button" class="size-preset" data-banana-ratio="3:2">3:2</button>
+            <button type="button" class="size-preset" data-banana-ratio="3:4">3:4</button>
+            <button type="button" class="size-preset" data-banana-ratio="4:3">4:3</button>
+            <button type="button" class="size-preset" data-banana-ratio="9:16">9:16</button>
+            <button type="button" class="size-preset" data-banana-ratio="16:9">16:9</button>
+            <button type="button" class="size-preset" data-banana-ratio="21:9">21:9</button>
+          </div>
+        </div>
+        <div class="field" id="bananaResolutionField">
+          <span class="label size-label">分辨率</span>
+          <input type="hidden" id="bananaImageSize" value="auto">
+          <div class="size-presets banana-resolution-presets" role="group" aria-label="Banana 图片分辨率">
+            <button type="button" class="size-preset active" data-banana-size="auto">自动</button>
+            <button type="button" class="size-preset" data-banana-size="1K">1K</button>
+            <button type="button" class="size-preset" data-banana-size="2K">2K</button>
+            <button type="button" class="size-preset" data-banana-size="4K">4K</button>
+          </div>
+        </div>
+        <p class="hint">支持文生图和多参考图图生图；多张图片依次生成，可随时取消并保留已完成结果。</p>
+      </div>
+      <div class="section size-section" id="gptSizeSettings">
         <div class="field">
           <span class="label size-label"><svg class="icon"><use href="#icon-crop"/></svg>图片尺寸</span>
           <input type="hidden" id="size" value="1024x1024">
@@ -220,7 +258,7 @@
       <div class="submit-section">
         <div class="submit-bar">
           <div class="submit-info">
-            <div class="generation-count">
+            <div class="generation-count" id="generationCountControl">
               <label for="imageCount">生成数量</label>
               <div class="count-stepper">
                 <button type="button" id="decreaseImageCountButton" aria-label="减少生成数量" title="减少生成数量" disabled>-</button>
@@ -231,7 +269,7 @@
             <div class="submit-summary truncate" id="submitSummary"></div>
           </div>
             <button class="btn btn-primary" id="submitButton" type="button">开始生成</button>
-            <label class="history-auto"><input type="checkbox" id="autoSaveHistory" checked>生成后自动保存到历史记录</label>
+            <label class="history-auto"><input type="checkbox" id="autoSaveHistory" checked>自动保存到历史记录</label>
             <button class="btn hidden" id="clearHistoryButton" type="button">清空历史记录</button>
             <button class="btn hidden" id="resetButton" type="button">重置表单</button>
         </div>

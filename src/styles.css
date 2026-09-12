@@ -934,6 +934,12 @@ details.config-details > summary p {
   white-space: nowrap;
 }
 
+.result-image-wrap { position:relative; }
+.result-download-button { position:absolute; top:10px; right:10px; z-index:1; display:inline-flex; align-items:center; justify-content:center; width:34px; height:34px; padding:0; border:1px solid rgba(255,255,255,.7); border-radius:8px; background:rgba(15,23,42,.68); color:#fff; box-shadow:0 2px 8px rgba(15,23,42,.18); }
+.result-download-button:hover, .result-download-button:focus-visible { background:rgba(15,23,42,.86); outline:none; }
+.result-download-button:disabled { opacity:.55; }
+.result-download-button .icon { width:18px; height:18px; }
+
 .result-body > .toolbar {
   flex-wrap: nowrap;
 }
@@ -1614,7 +1620,7 @@ h1 { font-size:22px; letter-spacing:.02em; }
 #toggleKeyButton .icon { width:16px; height:16px; }
 .connection-ok { color:#1da67e; font-size:12px; font-weight:700; }
 .config-body .action-row { justify-content:space-between; align-items:center; margin-left:110px; }
-.config-body .action-row .config-summary { order:0; flex:1; min-width:0; max-width:none; border:0; padding:0; background:none; white-space:normal; overflow-wrap:anywhere; line-height:1.5; }
+.config-body .action-row .config-summary { order:0; flex:1; min-width:0; max-width:none; border:0; padding:0; background:none; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; overflow-wrap:normal; line-height:1.5; }
 .config-body .action-row { flex-wrap:nowrap; }
 #saveConfigButton { flex-shrink:0; }
 .config-summary.is-checking { color:#2672b3; }
@@ -1624,7 +1630,7 @@ h1 { font-size:22px; letter-spacing:.02em; }
 .api-status[data-state="is-unconfigured"] { color:var(--muted); background:var(--panel-soft); }
 .api-status[data-state="is-checking"] { color:#2672b3; background:#eaf4fc; }
 .api-status[data-state="is-error"] { color:var(--danger); background:var(--danger-soft); }
-#saveConfigButton { min-height:33px; padding:6px 12px; }
+#saveConfigButton { min-height:33px; min-width:92px; padding:6px 12px; }
 .free-key-notice { display:none !important; }
 .field-label-actions { display:none !important; }
 .mode-field { margin-bottom:0; }
@@ -1636,6 +1642,7 @@ h1 { font-size:22px; letter-spacing:.02em; }
 #promptPolishButton, #promptHint { display:none !important; }
 .model-row { margin:14px 0 0; }
 .model-row > .field { grid-template-columns:80px minmax(0,1fr); align-items:center; margin:0; }
+.model-row > .field:last-child { grid-template-columns:42px minmax(0,1fr); }
 .model-row .select {
   min-height:35px;
   padding:6px 36px 6px 12px;
@@ -1646,6 +1653,9 @@ h1 { font-size:22px; letter-spacing:.02em; }
   background-position:right 12px center;
   background-size:16px 16px;
 }
+.model-select-row { display:flex; align-items:center; gap:8px; min-width:0; }
+.model-select-row .select { flex:1 1 auto; min-width:0; }
+.model-refresh-button { flex:0 0 36px; width:36px; min-height:35px; padding:4px 0; font-size:20px; line-height:1; }
 .prompt-actions { display:none; }
 body.has-prompt .prompt-actions { display:flex; }
 .prompt-field { margin:14px 0 0; }
@@ -1669,6 +1679,17 @@ body.has-prompt .prompt-actions { display:flex; }
 .size-section { padding-top:14px !important; }
 .size-section .field { margin-bottom:0; }
 .size-presets { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; margin-top:8px; }
+.provider-segmented { width:100%; grid-template-columns:repeat(2,minmax(0,1fr)); }
+.provider-field { flex:0 0 auto; padding:12px 20px; background:var(--panel); border-bottom:1px solid #edf2f6; }
+body[data-provider="banana"] { --primary:#1d4ed8; --primary-strong:#1e40af; --primary-deep:#1e3a8a; --primary-soft:#eff6ff; --primary-soft-strong:#dbeafe; --focus:0 0 0 3px rgba(29,78,216,.3); }
+body[data-provider="banana"] .segment.active, body[data-provider="banana"] .btn-primary { background:linear-gradient(135deg,#2563eb,#1d4ed8); box-shadow:0 4px 12px rgba(29,78,216,.25); }
+body[data-provider="banana"] .size-preset.active { border-color:#1d4ed8; color:#1d4ed8; background:#dbeafe; box-shadow:inset 0 0 0 1px #1d4ed8; }
+body[data-provider="banana"] .api-status { background:#dbeafe; color:#1d4ed8; }
+body[data-provider="banana"] .brand-mark { background:linear-gradient(145deg,#3b82f6,#1d4ed8); box-shadow:0 5px 12px rgba(29,78,216,.24); }
+body[data-provider="banana"] .history-auto input { accent-color:#1d4ed8; }
+.provider-segmented .segment[data-provider="banana"].active { background:#1d4ed8; box-shadow:0 3px 8px rgba(29,78,216,.2); }
+.banana-ratio-presets button[data-banana-ratio="auto"] { grid-column:1 / -1; }
+.banana-ratio-presets .size-preset.active, .banana-resolution-presets .size-preset.active { color:#1d4ed8; border-color:#1d4ed8; background:#dbeafe; }
 .size-preset { min-height:35px; border:1px solid #d8e5ef; border-radius:8px; background:#fbfdff; color:#334c67; font-size:13px; }
 .size-preset.active { border-color:#13aeb1; color:#119ea3; background:#f2fbfb; box-shadow:inset 0 0 0 1px #13aeb1; }
 .result-panel { padding:0; display:flex; flex-direction:column; container-type:inline-size; }
@@ -1712,6 +1733,10 @@ body.has-prompt .prompt-actions { display:flex; }
 .history-cover { width:98px; height:91px; border-radius:8px; object-fit:cover; background:#e8f0f4; }
 .history-copy { min-width:0; padding-top:2px; }
 .history-title { display:flex; align-items:center; justify-content:space-between; gap:6px; color:#172a43; font-size:15px; font-weight:700; line-height:22px; }
+.history-provider { flex:0 0 auto; padding:2px 7px; border-radius:999px; font-size:10px; font-weight:700; line-height:16px; letter-spacing:.02em; }
+.history-provider-gpt { color:#0f766e; background:#ccfbf1; }
+.history-provider-banana { color:#1d4ed8; background:#dbeafe; }
+.history-title-text { min-width:0; flex:1 1 auto; }
 .history-delete { flex:0 0 auto; display:inline-flex; align-items:center; justify-content:center; width:28px; height:28px; padding:0; border:0; border-radius:6px; background:transparent; color:#6f879e; cursor:pointer; }
 .history-delete:hover, .history-delete:focus-visible { color:var(--danger); background:var(--danger-soft); outline:none; }
 .history-delete .icon { width:16px; height:16px; }

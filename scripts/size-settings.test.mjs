@@ -29,14 +29,14 @@ const presets = [...html.matchAll(/data-size-preset="([^"]+)"/g)].map((match) =>
   return button;
 });
 const document = {
-  body: { dataset: {} },
+  body: element(),
   createElement: element,
   getElementById: (id) => nodes.get(id) ?? null,
   querySelectorAll: (selector) => selector === '[data-size-preset]' ? presets : [],
   addEventListener() {}
 };
 const context = vm.createContext({ document, window: { location: { search: '' }, addEventListener() {} }, URLSearchParams,
-  FormData, Blob, localStorage: { getItem() { return null; }, removeItem() {} }
+  FormData, Blob, localStorage: { getItem() { return null; }, removeItem() {}, setItem() {} }
 });
 vm.runInContext(source.replace(/^init\(\);\r?$/m, ''), context);
 vm.runInContext('bindEvents();', context);

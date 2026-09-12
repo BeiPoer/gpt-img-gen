@@ -35,6 +35,8 @@ Copy-Item app.config.example.json app.config.json
 
 仅使用 Images API 生成图片。在“生成模式”下方选择图片模型，默认使用 `gpt-image-2`；测试连接成功后，下拉框会显示接口返回的 `gpt-image` 系列模型。文生图、图生图和局部重绘请求使用当前选中的模型。
 
+页面也支持 Banana / Gemini 图片模型：切换“生图服务”为 Banana 后，手动填写其 API URL 和 API Key。支持 `gemini-2.5-flash-image`、`gemini-3.1-flash-image-preview`、`gemini-3-pro-image-preview`，请求使用 `/v1beta/models/{model}:generateContent`，支持文生图、多参考图图生图、宽高比、3.x 模型的 1K/2K/4K 分辨率，以及 1–10 张顺序生成。Banana 不支持局部重绘；多张生成中途取消会保留已完成结果。GPT 与 Banana 的配置分别保存在浏览器中。使用 `?bananaUrl=...` 可单独锁定 Banana API 地址。
+
 ```bash
 npm run dev
 ```

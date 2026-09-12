@@ -10,6 +10,12 @@ const HISTORY_LIMIT = 10;
 const DEFAULT_API_MODE = 'images';
 const DEFAULT_RESPONSE_MODEL = 'gpt-5.5';
 const DEFAULT_IMAGE_MODEL = 'gpt-image-2';
+const DEFAULT_BANANA_MODEL = 'gemini-3.1-flash-image-preview';
+const BANANA_MODELS = ['gemini-2.5-flash-image', DEFAULT_BANANA_MODEL, 'gemini-3-pro-image-preview'];
+const BANANA_RATIOS = ['auto', '1:1', '2:3', '3:2', '3:4', '4:3', '9:16', '16:9', '21:9'];
+const BANANA_SIZES = ['auto', '1K', '2K', '4K'];
+const PROVIDER_CACHE_KEY = 'gpt-image-gen2:provider';
+const IMAGE_MODEL_CACHE_KEY = 'gpt-image-gen2:image-model';
 const DEFAULT_SIZE = '1024x1024';
 const DEFAULT_IMAGE_COUNT = 1;
 const MAX_IMAGE_COUNT = 10;
@@ -35,6 +41,7 @@ const PAGE_OPTIONS = {
   noConfiguredApiKey: readBooleanSearchParam('nokey'),
   noHeader: readBooleanSearchParam('noheader'),
   fixedApiUrl: readSearchParam('url'),
+  fixedBananaUrl: readSearchParam('bananaUrl'),
   apiMode: DEFAULT_API_MODE
 };
 const SUPPORTED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
@@ -46,6 +53,15 @@ const SIZE_PRESET_VALUES = new Set([
 ]);
 let runtimeConfig = createDefaultRuntimeConfig();
 const el = {
+  imageProvider: document.getElementById('imageProvider'),
+  providerButtons: Array.from(document.querySelectorAll('[data-provider]')),
+  bananaSettings: document.getElementById('bananaSettings'),
+  bananaAspectRatio: document.getElementById('bananaAspectRatio'),
+  bananaRatioButtons: Array.from(document.querySelectorAll('[data-banana-ratio]')),
+  bananaSizeButtons: Array.from(document.querySelectorAll('[data-banana-size]')),
+  bananaImageSize: document.getElementById('bananaImageSize'),
+  bananaResolutionField: document.getElementById('bananaResolutionField'),
+  gptSizeSettings: document.getElementById('gptSizeSettings'),
   configDetails: document.getElementById('configDetails'),
   configSummary: document.getElementById('configSummary'),
   apiStatus: document.getElementById('apiStatus'),
@@ -62,6 +78,7 @@ const el = {
   apiModeHidden: Array.from(document.querySelectorAll('[data-api-mode-hidden]')),
   responseModel: document.getElementById('responseModel'),
   imageModel: document.getElementById('imageModel'),
+  refreshImageModelsButton: document.getElementById('refreshImageModelsButton'),
   prompt: document.getElementById('prompt'),
   promptPolishButton: document.getElementById('promptPolishButton'),
   clearPromptButton: document.getElementById('clearPromptButton'),
@@ -91,6 +108,7 @@ const el = {
   resetButton: document.getElementById('resetButton'),
   submitButton: document.getElementById('submitButton'),
   imageCount: document.getElementById('imageCount'),
+  generationCountControl: document.getElementById('generationCountControl'),
   decreaseImageCountButton: document.getElementById('decreaseImageCountButton'),
   increaseImageCountButton: document.getElementById('increaseImageCountButton'),
   submitSummary: document.getElementById('submitSummary'),
@@ -123,6 +141,9 @@ const el = {
 };
 
 const state = {
+  provider: 'gpt',
+  configDrafts: {},
+  lockedControls: [],
   mode: 'generate',
   apiMode: PAGE_OPTIONS.apiMode,
   responseModelOptions: [],
@@ -172,8 +193,12 @@ init();
 async function init() {
   applyPageOptionsUI();
   runtimeConfig = await loadRuntimeConfig();
+  state.provider = localStorage.getItem(PROVIDER_CACHE_KEY) === 'banana' ? 'banana' : 'gpt';
   applyRuntimeConfigUI();
   restoreConfig();
+  resetModelSelectsToDefaults();
+  restoreImageModelSelection();
+  updateProviderUI();
   updateApiModeUI();
   bindEvents();
   updateModeUI();
@@ -193,7 +218,128 @@ function applyPageOptionsUI() {
   document.body.classList.toggle('no-header', PAGE_OPTIONS.noHeader);
 }
 
+function isBanana() {
+  return state.provider === 'banana';
+}
+
+function providerStorageKey(key) {
+  return isBanana() ? `${key}:banana` : key;
+}
+
+function defaultImageModel() {
+  return isBanana() ? DEFAULT_BANANA_MODEL : DEFAULT_IMAGE_MODEL;
+}
+
+function defaultImageModelOptions() {
+  return (isBanana() ? BANANA_MODELS : [DEFAULT_IMAGE_MODEL]).map((value) => ({ value, label: value }));
+}
+
+function isBananaModel(value) {
+  return /^gemini-.*image/i.test(value);
+}
+
+function supportsBananaResolution() {
+  return /^gemini-3/i.test(resolveImageModelValue());
+}
+
+function normalizeProviderBaseUrl(value) {
+  if (!isBanana()) return normalizeApiBaseUrl(value, runtimeConfig.apiPathPrefix);
+  return trimmedStringValue(value).replace(/\/+$/, '').replace(/\/v1(?:beta)?$/i, '');
+}
+
+function persistImageModelSelection() {
+  localStorage.setItem(providerStorageKey(IMAGE_MODEL_CACHE_KEY), resolveImageModelValue());
+}
+
+function restoreImageModelSelection() {
+  const value = localStorage.getItem(providerStorageKey(IMAGE_MODEL_CACHE_KEY));
+  if (!value || !(isBanana() ? isBananaModel(value) : value.startsWith('gpt-image'))) return;
+  if (!Array.from(el.imageModel.options).some((option) => option.value === value)) {
+    const option = document.createElement('option');
+    option.value = option.textContent = value;
+    el.imageModel.appendChild(option);
+  }
+  setModelControlValue('image', value);
+}
+
+function switchProvider(provider, load = true) {
+  if (state.submitting) return;
+  provider = provider === 'banana' ? 'banana' : 'gpt';
+  if (provider === state.provider) return;
+  state.configDrafts[state.provider] = { apiUrl: getApiBaseUrl(), apiKey: getApiKey() };
+  localStorage.setItem(providerStorageKey(CONFIG_CACHE_KEY), JSON.stringify(state.configDrafts[state.provider]));
+  persistImageModelSelection();
+  state.modelLoadRequestId += 1;
+  state.loadingModels = false;
+  state.provider = provider;
+  localStorage.setItem(PROVIDER_CACHE_KEY, provider);
+  applyRuntimeConfigUI();
+  restoreConfig();
+  resetModelSelectsToDefaults();
+  restoreImageModelSelection();
+  updateProviderUI();
+  renderResults();
+  markRestoredDirty();
+  if (load && hasCompleteConfigFields()) loadModels();
+}
+
+function updateProviderUI() {
+  document.body.dataset.provider = state.provider;
+  el.providerButtons.forEach((button) => {
+    const active = button.dataset.provider === state.provider;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+  el.bananaSettings.classList.toggle('hidden', !isBanana());
+  el.bananaRatioButtons.forEach((button) => button.classList.toggle('active', button.dataset.bananaRatio === el.bananaAspectRatio.value));
+  el.bananaSizeButtons.forEach((button) => button.classList.toggle('active', button.dataset.bananaSize === el.bananaImageSize.value));
+  el.gptSizeSettings.classList.toggle('hidden', isBanana());
+  el.bananaResolutionField.classList.toggle('hidden', !supportsBananaResolution());
+  el.generationCountControl.classList.toggle('hidden', isBanana());
+  if (isBanana()) el.imageCount.value = DEFAULT_IMAGE_COUNT;
+  if (isBanana() && state.mode === 'mask') {
+    state.mode = 'edit';
+    resetMaskEditor();
+    exitMaskEditorFullscreen();
+    showToast('Banana 不支持局部重绘，已切换为图生图并保留源图。', 'info');
+  }
+  el.modeButtons.forEach((button) => {
+    button.disabled = state.submitting || (isBanana() && button.dataset.mode === 'mask');
+  });
+  updateModeUI();
+}
+
+function formatBananaSize(ratio, size) {
+  return `${ratio === 'auto' ? '自动比例' : ratio} · ${size === 'auto' ? '自动分辨率' : size}`;
+}
+
+function lockGenerationControls(locked) {
+  if (locked) {
+    state.lockedControls = Array.from(document.querySelectorAll('.form-panel input, .form-panel select, .form-panel textarea, .form-panel button, #resetButton, #clearCanvasButton'))
+      .map((control) => ({ control, disabled: control.disabled }));
+    state.lockedControls.forEach(({ control }) => { control.disabled = true; });
+  } else {
+    state.lockedControls.forEach(({ control, disabled }) => { control.disabled = disabled; });
+    state.lockedControls = [];
+    updateProviderUI();
+  }
+}
+
 function bindEvents() {
+  el.providerButtons.forEach((button) => button.addEventListener('click', () => switchProvider(button.dataset.provider)));
+  el.bananaSizeButtons.forEach((button) => button.addEventListener('click', () => {
+    el.bananaImageSize.value = button.dataset.bananaSize;
+    el.bananaSizeButtons.forEach((item) => item.classList.toggle('active', item === button));
+    updateRunSummary(); markRestoredDirty();
+  }));
+  for (const control of [el.bananaImageSize]) {
+    control.addEventListener('change', () => { updateRunSummary(); markRestoredDirty(); });
+  }
+  el.bananaRatioButtons.forEach((button) => button.addEventListener('click', () => {
+    el.bananaAspectRatio.value = button.dataset.bananaRatio;
+    el.bananaRatioButtons.forEach((item) => item.classList.toggle('active', item === button));
+    updateRunSummary(); markRestoredDirty();
+  }));
   el.apiUrl.addEventListener('input', markConfigUnchecked);
   el.apiKey.addEventListener('input', () => {
     markConfigUnchecked();
@@ -202,6 +348,7 @@ function bindEvents() {
   el.fillFreeKeyButton.addEventListener('click', fillConfiguredApiKey);
   el.toggleKeyButton.addEventListener('click', toggleApiKeyVisibility);
   el.saveConfigButton.addEventListener('click', testConnection);
+  el.refreshImageModelsButton.addEventListener('click', () => loadModels({ force: true }));
 
   el.modeButtons.forEach((button) => {
     button.addEventListener('click', () => setMode(button.dataset.mode));
@@ -213,6 +360,8 @@ function bindEvents() {
     markRestoredDirty();
   });
   el.imageModel.addEventListener('change', () => {
+    persistImageModelSelection();
+    updateProviderUI();
     updateRunSummary();
     markRestoredDirty();
   });
@@ -367,14 +516,14 @@ function createDefaultRuntimeConfig() {
 
 function applyRuntimeConfigUI() {
   const fixedApiUrl = getFixedApiBaseUrl();
-  el.apiUrl.placeholder = fixedApiUrl || runtimeConfig.apiUrl || '请填写 API URL';
+  el.apiUrl.placeholder = fixedApiUrl || (isBanana() ? '' : runtimeConfig.apiUrl) || '请填写 API URL';
   el.apiUrl.readOnly = Boolean(fixedApiUrl);
   el.apiUrl.setAttribute('aria-readonly', fixedApiUrl ? 'true' : 'false');
   el.fillFreeKeyButton.textContent = runtimeConfig.apiKeyButtonText;
   el.fillFreeKeyButton.classList.toggle('hidden', !canUseConfiguredApiKey());
   el.freeKeyNotice.textContent = runtimeConfig.apiKeyNotice;
 
-  if (!PAGE_OPTIONS.noConfiguredApiKey && runtimeConfig.keyUrl) {
+  if (!isBanana() && !PAGE_OPTIONS.noConfiguredApiKey && runtimeConfig.keyUrl) {
     el.getKeyLink.href = runtimeConfig.keyUrl;
     el.getKeyLink.classList.remove('hidden');
   } else {
@@ -386,14 +535,15 @@ function applyRuntimeConfigUI() {
 function restoreConfig() {
   let config = null;
   try {
-    config = JSON.parse(localStorage.getItem(CONFIG_CACHE_KEY) || 'null');
+    config = JSON.parse(localStorage.getItem(providerStorageKey(CONFIG_CACHE_KEY)) || 'null');
   } catch {
-    localStorage.removeItem(CONFIG_CACHE_KEY);
+    localStorage.removeItem(providerStorageKey(CONFIG_CACHE_KEY));
   }
-  const cachedApiUrl = normalizeApiBaseUrl(config?.apiUrl, runtimeConfig.apiPathPrefix);
+  config = state.configDrafts[state.provider] || config;
+  const cachedApiUrl = normalizeProviderBaseUrl(config?.apiUrl);
   const cachedApiKey = firstConfigString(config?.apiKey);
   const configuredApiKey = canUseConfiguredApiKey() ? runtimeConfig.apiKey : '';
-  el.apiUrl.value = getFixedApiBaseUrl() || cachedApiUrl || runtimeConfig.apiUrl;
+  el.apiUrl.value = getFixedApiBaseUrl() || cachedApiUrl || (isBanana() ? '' : runtimeConfig.apiUrl);
   el.apiKey.value = cachedApiKey || configuredApiKey;
   state.configCheckStatus = 'unconfigured';
   el.configDetails.open = true;
@@ -404,6 +554,7 @@ function restoreConfig() {
 }
 
 function getApiModeLabel() {
+  if (isBanana()) return 'Banana';
   return state.apiMode === 'images' ? 'Images API' : 'Responses API';
 }
 
@@ -413,7 +564,7 @@ function saveConfig(options = {}) {
     apiUrl: getApiBaseUrl(),
     apiKey: getApiKey()
   };
-  localStorage.setItem(CONFIG_CACHE_KEY, JSON.stringify(config));
+  localStorage.setItem(providerStorageKey(CONFIG_CACHE_KEY), JSON.stringify(config));
   clearStaleModelCaches(hasCompleteConfigFields() ? getConfigSignature() : '');
   if (!options.silent) showToast('配置已保存', 'success');
   updateConfigSummary();
@@ -447,7 +598,7 @@ function updateConfiguredKeyNotice() {
 }
 
 function canUseConfiguredApiKey() {
-  return !PAGE_OPTIONS.noConfiguredApiKey && Boolean(runtimeConfig.apiKey);
+  return !isBanana() && !PAGE_OPTIONS.noConfiguredApiKey && Boolean(runtimeConfig.apiKey);
 }
 
 function setApiKeyBalanceNotice(visible) {
@@ -467,11 +618,11 @@ function getConfigSignature() {
 }
 
 function getApiBaseUrl() {
-  return getFixedApiBaseUrl() || normalizeApiBaseUrl(el.apiUrl.value, runtimeConfig.apiPathPrefix);
+  return getFixedApiBaseUrl() || normalizeProviderBaseUrl(el.apiUrl.value);
 }
 
 function getFixedApiBaseUrl() {
-  return normalizeApiBaseUrl(PAGE_OPTIONS.fixedApiUrl, runtimeConfig.apiPathPrefix);
+  return normalizeProviderBaseUrl(isBanana() ? PAGE_OPTIONS.fixedBananaUrl : PAGE_OPTIONS.fixedApiUrl);
 }
 
 function buildApiUrl(path) {
@@ -481,12 +632,13 @@ function buildApiUrl(path) {
 }
 
 function getApiPathPrefix() {
-  return normalizeApiPathPrefix(runtimeConfig.apiPathPrefix);
+  return isBanana() ? '/v1' : normalizeApiPathPrefix(runtimeConfig.apiPathPrefix);
 }
 
 function updateConfigSummary() {
   el.saveConfigButton.disabled = state.loadingModels;
-  el.saveConfigButton.textContent = state.loadingModels ? '连接测试中' : '测试连接';
+  el.refreshImageModelsButton.disabled = state.loadingModels || !hasCompleteConfigFields();
+  el.saveConfigButton.textContent = state.loadingModels ? '保存中' : '保存';
   if (state.configCheckStatus === 'checking') {
     setConfigSummary('连接测试中', 'is-checking');
     return;
@@ -529,7 +681,8 @@ function resetModelSelectsToDefaults() {
   state.responseModelOptions = [];
   state.modelOptionsConfigSignature = '';
   fillModelSelect(el.responseModel, [{ value: DEFAULT_RESPONSE_MODEL, label: DEFAULT_RESPONSE_MODEL }]);
-  fillModelSelect(el.imageModel, [{ value: DEFAULT_IMAGE_MODEL, label: DEFAULT_IMAGE_MODEL }]);
+  fillModelSelect(el.imageModel, defaultImageModelOptions());
+  setModelControlValue('image', defaultImageModel());
   updateRunSummary();
 }
 
@@ -930,12 +1083,13 @@ function updateRunSummary() {
   const size = getCurrentSizeDisplay();
   const streamPart = state.apiMode === 'images' ? ` · ${getImageStreamModeLabel()}` : '';
   const sourcePart = state.mode === 'generate' ? '' : ` · ${state.sourceImages.length} 张源图`;
-  const summary = `${apiModeLabel} · ${modeLabel} · ${size} · PNG · 默认质量${streamPart}${sourcePart}`;
+  const summary = isBanana() ? `${apiModeLabel} · ${modeLabel} · ${size}${sourcePart}` : `${apiModeLabel} · ${modeLabel} · ${size} · PNG · 默认质量${streamPart}${sourcePart}`;
   el.submitSummary.textContent = state.submitting ? `正在生成：${summary}` : `准备生成：${summary}`;
   updateSubmitButton();
 }
 
 function getCurrentSizeDisplay() {
+  if (isBanana()) return formatBananaSize(el.bananaAspectRatio.value, supportsBananaResolution() ? el.bananaImageSize.value : 'auto');
   if (el.size.value !== CUSTOM_SIZE_VALUE) return trimmedStringValue(el.size.value) || DEFAULT_SIZE;
   if (validateCustomSize()) return '尺寸待修正';
   const dimensions = readCustomSizeDimensions();
@@ -980,7 +1134,7 @@ async function loadModels({ force = false } = {}) {
   const requestId = ++state.modelLoadRequestId;
   const requestConfigSignature = getConfigSignature();
   clearStaleModelCaches(requestConfigSignature);
-  if (force) localStorage.removeItem(MODEL_LIST_CACHE_KEY);
+  if (force) localStorage.removeItem(providerStorageKey(MODEL_LIST_CACHE_KEY));
   const cachedModels = force ? null : readCachedModelList(requestConfigSignature);
   if (cachedModels) {
     applyLoadedModelOptions(cachedModels, requestConfigSignature, true);
@@ -1020,7 +1174,7 @@ async function loadModels({ force = false } = {}) {
       throw new Error('该API Key所剩余额不足');
     }
 
-    if (!Array.isArray(payload) && !Array.isArray(payload?.data)) {
+    if (!Array.isArray(payload) && !Array.isArray(payload?.data) && !Array.isArray(payload?.models)) {
       throw new Error('接口未返回有效的模型列表。');
     }
     const allModels = normalizeOpenAIModelOptions(payload);
@@ -1055,7 +1209,8 @@ function fillModelSelect(select, options) {
 function applyLoadedModelOptions(allModels, configSignature, fromCache) {
   const selectedImageModel = resolveImageModelValue();
   const responseModels = allModels.filter((option) => !isImageGenerationModelId(option.value));
-  const imageModels = allModels.filter((option) => option.value.toLowerCase().startsWith('gpt-image'));
+  const imageModels = allModels.filter((option) => isBanana() ? isBananaModel(option.value) : option.value.toLowerCase().startsWith('gpt-image'));
+  if (isBanana() && !imageModels.length) showToast('接口未列出 Gemini 图片模型，保留默认选项；请确认 Key 的模型权限。', 'warning');
   state.responseModelOptions = responseModels.length > 0
     ? responseModels
     : [{ value: DEFAULT_RESPONSE_MODEL, label: DEFAULT_RESPONSE_MODEL }];
@@ -1063,8 +1218,9 @@ function applyLoadedModelOptions(allModels, configSignature, fromCache) {
   fillModelSelect(el.responseModel, state.responseModelOptions);
   fillModelSelect(el.imageModel, imageModels.length > 0
     ? imageModels
-    : [{ value: DEFAULT_IMAGE_MODEL, label: DEFAULT_IMAGE_MODEL }]);
+    : defaultImageModelOptions());
   setModelControlValue('image', selectedImageModel);
+  updateProviderUI();
   setModelControlValue('response', resolvePreferredResponseModelValue(state.responseModelOptions, configSignature));
   updateRunSummary();
 
@@ -1074,7 +1230,7 @@ function applyLoadedModelOptions(allModels, configSignature, fromCache) {
 
 function setModelControlValue(kind, value) {
   const select = kind === 'response' ? el.responseModel : el.imageModel;
-  const fallback = kind === 'response' ? DEFAULT_RESPONSE_MODEL : DEFAULT_IMAGE_MODEL;
+  const fallback = kind === 'response' ? DEFAULT_RESPONSE_MODEL : defaultImageModel();
   const normalizedValue = trimmedStringValue(value) || fallback;
   const hasOption = Array.from(select.options).some((option) => option.value === normalizedValue);
   const fallbackOption = Array.from(select.options).find((option) => option.value === fallback);
@@ -1092,23 +1248,23 @@ function resolvePreferredResponseModelValue(options, configSignature) {
 function readCachedModelList(configSignature) {
   let parsed = null;
   try {
-    parsed = JSON.parse(localStorage.getItem(MODEL_LIST_CACHE_KEY) || 'null');
+    parsed = JSON.parse(localStorage.getItem(providerStorageKey(MODEL_LIST_CACHE_KEY)) || 'null');
   } catch {
-    localStorage.removeItem(MODEL_LIST_CACHE_KEY);
+    localStorage.removeItem(providerStorageKey(MODEL_LIST_CACHE_KEY));
     return null;
   }
   if (!isRecord(parsed) || parsed.version !== 1 || parsed.configSignature !== configSignature) {
-    if (parsed) localStorage.removeItem(MODEL_LIST_CACHE_KEY);
+    if (parsed) localStorage.removeItem(providerStorageKey(MODEL_LIST_CACHE_KEY));
     return null;
   }
   const savedAt = typeof parsed.savedAt === 'number' ? parsed.savedAt : 0;
   if (!savedAt || Date.now() - savedAt > MODEL_LIST_CACHE_TTL_MS) {
-    localStorage.removeItem(MODEL_LIST_CACHE_KEY);
+    localStorage.removeItem(providerStorageKey(MODEL_LIST_CACHE_KEY));
     return null;
   }
   const models = normalizeCachedModelOptions(parsed.models);
   if (models.length === 0) {
-    localStorage.removeItem(MODEL_LIST_CACHE_KEY);
+    localStorage.removeItem(providerStorageKey(MODEL_LIST_CACHE_KEY));
     return null;
   }
   return models;
@@ -1116,7 +1272,7 @@ function readCachedModelList(configSignature) {
 
 function writeModelListCache(configSignature, models) {
   try {
-    localStorage.setItem(MODEL_LIST_CACHE_KEY, JSON.stringify({
+    localStorage.setItem(providerStorageKey(MODEL_LIST_CACHE_KEY), JSON.stringify({
       version: 1,
       configSignature,
       savedAt: Date.now(),
@@ -1147,7 +1303,7 @@ function normalizeCachedModelOptions(value) {
 function persistResponseModelSelection() {
   if (!hasCompleteConfigFields() || !trimmedStringValue(el.responseModel.value)) return;
   try {
-    localStorage.setItem(RESPONSE_MODEL_SELECTION_CACHE_KEY, JSON.stringify({
+    localStorage.setItem(providerStorageKey(RESPONSE_MODEL_SELECTION_CACHE_KEY), JSON.stringify({
       version: 1,
       configSignature: getConfigSignature(),
       value: trimmedStringValue(el.responseModel.value)
@@ -1160,21 +1316,21 @@ function persistResponseModelSelection() {
 function readCachedResponseModelSelection(configSignature) {
   let parsed = null;
   try {
-    parsed = JSON.parse(localStorage.getItem(RESPONSE_MODEL_SELECTION_CACHE_KEY) || 'null');
+    parsed = JSON.parse(localStorage.getItem(providerStorageKey(RESPONSE_MODEL_SELECTION_CACHE_KEY)) || 'null');
   } catch {
-    localStorage.removeItem(RESPONSE_MODEL_SELECTION_CACHE_KEY);
+    localStorage.removeItem(providerStorageKey(RESPONSE_MODEL_SELECTION_CACHE_KEY));
     return '';
   }
   if (!isRecord(parsed) || parsed.version !== 1 || parsed.configSignature !== configSignature) {
-    if (parsed) localStorage.removeItem(RESPONSE_MODEL_SELECTION_CACHE_KEY);
+    if (parsed) localStorage.removeItem(providerStorageKey(RESPONSE_MODEL_SELECTION_CACHE_KEY));
     return '';
   }
   return trimmedStringValue(parsed.value);
 }
 
 function clearStaleModelCaches(configSignature) {
-  const removedModelCache = clearStorageItemForDifferentConfig(MODEL_LIST_CACHE_KEY, configSignature);
-  const removedSelectionCache = clearStorageItemForDifferentConfig(RESPONSE_MODEL_SELECTION_CACHE_KEY, configSignature);
+  const removedModelCache = clearStorageItemForDifferentConfig(providerStorageKey(MODEL_LIST_CACHE_KEY), configSignature);
+  const removedSelectionCache = clearStorageItemForDifferentConfig(providerStorageKey(RESPONSE_MODEL_SELECTION_CACHE_KEY), configSignature);
   return removedModelCache || removedSelectionCache;
 }
 
@@ -1198,6 +1354,8 @@ function normalizeOpenAIModelOptions(payload) {
   let data = [];
   if (isRecord(payload) && Array.isArray(payload.data)) {
     data = payload.data;
+  } else if (isRecord(payload) && Array.isArray(payload.models)) {
+    data = payload.models;
   } else if (Array.isArray(payload)) {
     data = payload;
   }
@@ -1219,11 +1377,11 @@ function normalizeOpenAIModelOptions(payload) {
 
 function normalizeOpenAIModelItem(value) {
   if (typeof value === 'string') {
-    const id = value.trim();
+    const id = value.trim().replace(/^models\//, '');
     return id ? { id, displayName: id } : null;
   }
   if (!isRecord(value)) return null;
-  const id = trimmedStringValue(value.id);
+  const id = (trimmedStringValue(value.id) || trimmedStringValue(value.name)).replace(/^models\//, '');
   if (!id) return null;
   return {
     id,
@@ -1239,6 +1397,7 @@ function isImageGenerationModelId(value) {
 }
 
 function setMode(mode) {
+  if (state.submitting || (isBanana() && mode === 'mask')) return;
   if (!['generate', 'edit', 'mask'].includes(mode)) return;
   state.mode = mode;
   state.submitError = '';
@@ -1334,6 +1493,7 @@ function openSourceFilePicker() {
 }
 
 function clearCanvas() {
+  if (state.submitting) return;
   if (state.resultImages.length === 0) return;
   state.resultImages = [];
   state.restoredFromCache = false;
@@ -1433,6 +1593,7 @@ function updateActiveHelpTooltip() {
 }
 
 function addSourceFiles(selectedFiles) {
+  if (state.submitting) return;
   const files = selectedFiles.filter(isSupportedImageFile);
   if (selectedFiles.length !== files.length) {
     showToast('仅支持 PNG、JPEG、WebP 图片。', 'warning');
@@ -1466,6 +1627,7 @@ function createLocalImagePreview(file) {
 }
 
 function removeSourceImage(id) {
+  if (state.submitting) return;
   const target = state.sourceImages.find((item) => item.id === id);
   if (!target) return;
   URL.revokeObjectURL(target.url);
@@ -1523,12 +1685,16 @@ function renderSourceImages() {
 }
 
 function resetForm() {
+  if (state.submitting) return;
+  el.bananaAspectRatio.value = '1:1';
+  el.bananaImageSize.value = 'auto';
   state.mode = 'generate';
   state.apiMode = PAGE_OPTIONS.apiMode;
   el.prompt.value = '';
   el.imageCount.value = DEFAULT_IMAGE_COUNT;
   setModelControlValue('response', DEFAULT_RESPONSE_MODEL);
-  setModelControlValue('image', DEFAULT_IMAGE_MODEL);
+  setModelControlValue('image', defaultImageModel());
+  updateProviderUI();
   el.size.value = DEFAULT_SIZE;
   el.customSizeWidth.value = DEFAULT_CUSTOM_SIZE_WIDTH;
   el.customSizeHeight.value = DEFAULT_CUSTOM_SIZE_HEIGHT;
@@ -1560,7 +1726,8 @@ async function submitGeneration() {
   }
 
   const startedAt = performance.now();
-  const requestedCount = readImageCount();
+  const requestedCount = isBanana() ? 1 : readImageCount();
+  const formSnapshot = captureCurrentForm();
   saveConfig({ loadModelsAfterSave: false });
   state.submitError = '';
   state.resultImages = [];
@@ -1573,24 +1740,17 @@ async function submitGeneration() {
   updateRunSummary();
   renderResults();
   updateSubmitButton();
+  lockGenerationControls(true);
 
   try {
     const request = await buildGenerationRequest();
-    const response = await fetch(request.url, {
-      method: request.method,
-      headers: request.headers,
-      body: request.body,
-      signal: state.abortController.signal
-    });
-
-    if (!response.ok) {
-      const responseText = await response.text();
-      throw new Error(extractImagesErrorMessage(responseText, response.status));
-    }
-
-    const images = isEventStreamResponse(response)
-      ? await consumeImageGenerationStream(response)
-      : await consumeImageGenerationJsonResponse(response);
+    const signal = state.abortController.signal;
+    const images = isBanana()
+      ? await generateBananaImages(request, requestedCount, signal, (images) => {
+        state.resultImages = images;
+        renderResults();
+      })
+      : await requestImages(request, signal);
     if (images.length === 0) {
       throw new Error('接口已返回成功，但没有拿到可展示的图片数据。');
     }
@@ -1600,7 +1760,7 @@ async function submitGeneration() {
     state.lastSavedAt = new Date().toISOString();
     state.lastDurationMs = Math.max(0, Math.round(performance.now() - startedAt));
     state.activeHistoryId = '';
-    const saved = await persistCachedResult();
+    const saved = await persistCachedResult(formSnapshot);
     renderResults();
     renderHistory();
     showToast(`已生成 ${images.length} 张图片，耗时 ${formatDuration(state.lastDurationMs)}`, 'success');
@@ -1615,6 +1775,17 @@ async function submitGeneration() {
       8000
     );
   } catch (error) {
+    if (isBanana() && state.resultImages.length > 0) {
+      const reason = error.name === 'AbortError' ? '已取消剩余请求' : extractErrorMessage(error, '后续请求失败');
+      state.submitError = `${reason}；已保留 ${state.resultImages.length}/${requestedCount} 张图片。`;
+      state.lastSavedAt = new Date().toISOString();
+      state.lastDurationMs = Math.max(0, Math.round(performance.now() - startedAt));
+      const saved = await persistCachedResult(formSnapshot);
+      renderHistory();
+      showToast(state.submitError, 'warning', 8000);
+      if (!saved) showToast('已完成图片未能保存到历史，请及时下载。', 'warning', 8000);
+      return;
+    }
     if (error instanceof DOMException && error.name === 'AbortError') {
       state.resultImages = [];
       state.restoredFromCache = false;
@@ -1630,6 +1801,7 @@ async function submitGeneration() {
   } finally {
     state.submitting = false;
     state.abortController = null;
+    lockGenerationControls(false);
     updateRunSummary();
     renderResults();
     updateSubmitButton();
@@ -1660,17 +1832,15 @@ function updateSubmitButton() {
 }
 
 function cancelGeneration() {
-  if (state.abortController) {
-    state.abortController.abort();
-    state.abortController = null;
-  }
-  state.submitting = false;
-  updateRunSummary();
-  updateSubmitButton();
-  renderResults();
+  state.abortController?.abort();
 }
 
 function validateGenerationForm() {
+  if (isBanana()) {
+    if (state.mode === 'mask') return 'Banana 不支持局部重绘，请使用图生图。';
+    if (!isBananaModel(resolveImageModelValue())) return '请选择 Gemini 图片模型。';
+    if (!BANANA_RATIOS.includes(el.bananaAspectRatio.value) || !BANANA_SIZES.includes(el.bananaImageSize.value)) return '请选择有效的 Banana 比例和分辨率。';
+  }
   if (readImageCount() === null) return '生成数量必须为 1–10 的整数。';
   if (!getApiBaseUrl()) return '请填写 API URL。';
   if (!getApiKey()) return '请填写 API Key。';
@@ -1688,12 +1858,120 @@ function validateGenerationForm() {
 }
 
 async function buildGenerationRequest() {
+  if (isBanana()) return buildBananaRequest();
   if (readImageCount() === null) throw new Error('生成数量必须为 1–10 的整数。');
   if (state.apiMode === 'images') return buildImagesApiRequest();
   return buildResponsesApiRequest();
 }
 
+async function requestImages(request, signal) {
+  signal.throwIfAborted();
+  const response = await fetch(request.url, { ...request, signal });
+  if (!response.ok) throw new Error(extractImagesErrorMessage(await response.text(), response.status));
+  return isEventStreamResponse(response)
+    ? consumeImageGenerationStream(response)
+    : consumeImageGenerationJsonResponse(response);
+}
+
+async function buildBananaRequest() {
+  const validationError = validateGenerationForm();
+  if (validationError) throw new Error(validationError);
+  const model = resolveImageModelValue();
+  const request = {
+    url: `${getApiBaseUrl()}/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+    method: 'POST',
+    headers: { Authorization: `Bearer ${getApiKey()}`, 'Content-Type': 'application/json' }
+  };
+  const parts = [{ text: trimmedStringValue(el.prompt.value) }];
+  const imageConfig = {};
+  if (el.bananaAspectRatio.value !== 'auto') imageConfig.aspectRatio = el.bananaAspectRatio.value;
+  if (supportsBananaResolution() && el.bananaImageSize.value !== 'auto') imageConfig.imageSize = el.bananaImageSize.value;
+  const images = state.mode === 'edit' ? [...state.sourceImages] : [];
+  for (const item of images) {
+    const dataUrl = await fileToDataUrl(item.file);
+    parts.push({ inlineData: { mimeType: item.file.type, data: dataUrl.slice(dataUrl.indexOf(',') + 1) } });
+  }
+  request.body = JSON.stringify({
+    contents: [{ role: 'user', parts }],
+    generationConfig: { responseModalities: ['IMAGE'], ...(Object.keys(imageConfig).length ? { imageConfig } : {}) },
+    response_format: 'url'
+  });
+  return request;
+}
+
+async function requestBananaImages(request, signal) {
+  // Retry only a rejected gateway extension, never a failed generation or rate limit.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    signal.throwIfAborted();
+    const response = await fetch(request.url, { method: request.method, headers: request.headers, body: request.body, signal });
+    const text = await response.text();
+    if (!response.ok) {
+      const message = extractImagesErrorMessage(text, response.status);
+      if (attempt === 0 && [400, 422].includes(response.status) &&
+          /response[_ ]format/i.test(message) && /unknown|unrecognized|unsupported|not supported|invalid|not permitted|not allowed|不支持|未知|无效/i.test(message)) {
+        const body = JSON.parse(request.body);
+        delete body.response_format;
+        request = { ...request, body: JSON.stringify(body) };
+        continue;
+      }
+      throw new Error(message);
+    }
+    const payload = parseJsonPayload(text, 'Banana 接口未返回有效 JSON。');
+    if (payload.error) throw new Error(payload.error.message || 'Banana 生图失败。');
+    return extractBananaImages(payload);
+  }
+}
+
+function extractBananaImages(payload) {
+  const body = payload.response || payload;
+  const candidates = [];
+  for (const item of body.data || []) {
+    candidates.push({ url: item.url, b64: item.b64_json, mimeType: item.mime_type, revisedPrompt: item.revised_prompt });
+  }
+  for (const candidate of body.candidates || []) {
+    const parts = candidate.content?.parts || [];
+    const revisedPrompt = parts.filter((part) => typeof part.text === 'string').map((part) => part.text).join('\n');
+    for (const part of parts) {
+      const inline = part.inlineData || part.inline_data;
+      const file = part.fileData || part.file_data;
+      if (inline?.data || file?.fileUri || file?.file_uri) {
+        candidates.push({
+          url: file?.fileUri || file?.file_uri,
+          b64: inline?.data,
+          mimeType: inline?.mimeType || inline?.mime_type || file?.mimeType || file?.mime_type,
+          revisedPrompt
+        });
+      }
+    }
+  }
+  const images = candidates.map((candidate, index) => {
+    if (candidate.url && !/^https?:\/\//i.test(candidate.url)) return null;
+    if (candidate.mimeType && !/^image\/(png|jpeg|webp|gif|bmp)$/i.test(candidate.mimeType)) return null;
+    return createStreamResultImage(candidate, index, false);
+  }).filter(Boolean);
+  if (!images.length) {
+    const feedback = body.promptFeedback || body.prompt_feedback;
+    const reason = body.error?.message || feedback?.blockReasonMessage || feedback?.blockReason ||
+      body.candidates?.map((candidate) => candidate.finishMessage || candidate.finishReason).filter(Boolean).join('；');
+    throw new Error(`Banana 未返回图片${reason ? `：${reason}` : '，请调整提示词后重试。'}`);
+  }
+  return images;
+}
+
+async function generateBananaImages(request, count, signal, onProgress) {
+  const images = [];
+  for (let index = 0; index < count && images.length < count; index += 1) {
+    signal.throwIfAborted();
+    images.push(...await requestBananaImages(request, signal));
+    images.splice(count);
+    images.forEach((image, imageIndex) => { image.fileName = buildImageFileName(imageIndex, image.url, image.mimeType); });
+    onProgress([...images]);
+  }
+  return images;
+}
+
 function validateCustomSize() {
+  if (isBanana()) return '';
   if (el.size.value !== CUSTOM_SIZE_VALUE) return '';
   const dimensions = readCustomSizeDimensions();
   if (!dimensions) return '请输入有效的自定义宽高。';
@@ -1901,7 +2179,7 @@ function isInputFidelityUnsupportedImageModel() {
 }
 
 function resolveImageModelValue() {
-  return trimmedStringValue(el.imageModel.value) || DEFAULT_IMAGE_MODEL;
+  return trimmedStringValue(el.imageModel.value) || defaultImageModel();
 }
 
 function resolveSizeValue() {
@@ -2151,7 +2429,7 @@ function streamImageCandidateKey(url, b64, fallback) {
 function createStreamResultImage(candidate, index, isPartial) {
   if (!candidate) return null;
   const outputFormat = trimmedStringValue(candidate.outputFormat) || 'png';
-  const mimeType = resolveMimeType(outputFormat);
+  const mimeType = trimmedStringValue(candidate.mimeType) || resolveMimeType(outputFormat);
   const url = normalizeStreamImageUrl(candidate, mimeType);
   if (!url) return null;
   return {
@@ -2500,7 +2778,7 @@ function renderResults() {
 
   if (state.submitting) {
     el.resultSummary.textContent = state.resultImages.length > 0
-      ? `已收到 ${state.resultImages.length} 张流式预览，最终结果仍在生成中。`
+      ? (isBanana() ? `已完成 ${state.resultImages.length}/${readImageCount()} 张，正在生成剩余图片。` : `已收到 ${state.resultImages.length} 张流式预览，最终结果仍在生成中。`)
       : '请求已发出，正在等待图片返回。';
   } else if (state.resultImages.length === 0) {
     el.resultSummary.textContent = '生成完成后会在这里展示最新结果。';
@@ -2526,12 +2804,12 @@ function renderResults() {
     const title = document.createElement('div');
     title.className = 'state-title';
     title.style.color = 'var(--danger)';
-    title.textContent = '生成失败';
+    title.textContent = state.resultImages.length ? '部分图片已完成' : '生成失败';
     const message = document.createElement('div');
     message.textContent = state.submitError;
     box.append(title, message);
     el.resultBody.appendChild(box);
-    return;
+    if (state.resultImages.length === 0) return;
   }
 
   if (state.resultImages.length === 0) {
@@ -2546,7 +2824,7 @@ function renderResults() {
     const streaming = document.createElement('div');
     streaming.className = 'soft-box';
     streaming.style.marginBottom = '10px';
-    streaming.textContent = `已收到 ${state.resultImages.length} 张流式预览，最终结果仍在生成中。`;
+    streaming.textContent = (isBanana() ? `已完成 ${state.resultImages.length}/${readImageCount()} 张，正在生成剩余图片。` : `已收到 ${state.resultImages.length} 张流式预览，最终结果仍在生成中。`);
     el.resultBody.appendChild(streaming);
   }
 
@@ -2566,13 +2844,25 @@ function createResultCard(image, index) {
   imageButton.className = 'result-image-button';
   imageButton.type = 'button';
   imageButton.addEventListener('click', () => openPreview(image.url, image.fileName));
+  const imageWrap = document.createElement('div');
+  imageWrap.className = 'result-image-wrap';
   const img = document.createElement('img');
   img.className = 'result-image';
   img.src = image.url;
   img.alt = `generated-image-${index + 1}`;
   img.loading = 'lazy';
   imageButton.appendChild(img);
-  card.appendChild(imageButton);
+  imageWrap.appendChild(imageButton);
+  const download = document.createElement('button');
+  download.className = 'result-download-button';
+  download.type = 'button';
+  download.setAttribute('aria-label', '下载图片');
+  download.title = '下载图片';
+  download.disabled = state.submitting || image.isPartial;
+  download.innerHTML = '<svg class="icon" aria-hidden="true"><use href="#icon-download"/></svg>';
+  download.addEventListener('click', (event) => { event.stopPropagation(); downloadImage(image, index); });
+  imageWrap.appendChild(download);
+  card.appendChild(imageWrap);
 
   const body = document.createElement('div');
   body.className = 'result-body';
@@ -2592,12 +2882,6 @@ function createResultCard(image, index) {
 
   const actions = document.createElement('div');
   actions.className = 'toolbar';
-  const download = document.createElement('button');
-  download.className = 'btn btn-sm';
-  download.type = 'button';
-  download.textContent = '下载';
-  download.disabled = state.submitting || image.isPartial;
-  download.addEventListener('click', () => downloadImage(image, index));
   const editReference = document.createElement('button');
   editReference.className = 'btn btn-sm result-reference-button';
   editReference.type = 'button';
@@ -2608,16 +2892,16 @@ function createResultCard(image, index) {
   maskReference.className = 'btn btn-sm result-reference-button';
   maskReference.type = 'button';
   maskReference.textContent = '作为局部重绘参考图';
-  maskReference.disabled = state.submitting || image.isPartial;
+  maskReference.disabled = isBanana() || state.submitting || image.isPartial;
   maskReference.addEventListener('click', () => useResultAsSourceReference(image, index, 'mask', maskReference));
-  actions.append(download, editReference, maskReference);
+  actions.append(editReference, maskReference);
   body.appendChild(actions);
   card.appendChild(body);
   return card;
 }
 
 async function useResultAsSourceReference(image, index, mode, button) {
-  if (state.submitting || image.isPartial) return;
+  if (state.submitting || image.isPartial || (isBanana() && mode === 'mask')) return;
   const originalText = button?.textContent || '';
   if (button) {
     button.disabled = true;
@@ -2684,8 +2968,8 @@ function buildResultReferenceFileName(image, index, mimeType) {
   return /\.(png|jpe?g|webp)$/i.test(safeName) ? safeName : `${safeName}.${extension}`;
 }
 
-async function persistCachedResult() {
-  const entry = createHistoryEntry(createCachedResultPayload(state.lastSavedAt, state.resultImages, state.lastDurationMs));
+async function persistCachedResult(form = captureCurrentForm()) {
+  const entry = createHistoryEntry(createCachedResultPayload(state.lastSavedAt, state.resultImages, state.lastDurationMs, form));
   state.history = [
     entry,
     ...state.history.filter((item) => item.id !== entry.id)
@@ -2695,18 +2979,21 @@ async function persistCachedResult() {
   return saved;
 }
 
-function createCachedResultPayload(savedAt, results, durationMs) {
+function createCachedResultPayload(savedAt, results, durationMs, form = captureCurrentForm()) {
   return {
     version: 1,
     savedAt,
     durationMs: normalizeDurationMs(durationMs),
-    form: captureCurrentForm(),
+    form,
     results
   };
 }
 
 function captureCurrentForm() {
   return {
+    provider: state.provider,
+    bananaAspectRatio: el.bananaAspectRatio.value,
+    bananaImageSize: el.bananaImageSize.value,
     count: readImageCount() ?? DEFAULT_IMAGE_COUNT,
     apiMode: state.apiMode,
     mode: state.mode,
@@ -2873,13 +3160,20 @@ function normalizeCachedResult(value) {
 function normalizeCachedForm(value) {
   const storedMode = stringValue(value.mode);
   const normalizedSize = normalizeCachedSizeSettings(value);
+  const storedModel = stringValue(value.model);
+  const provider = value.provider === 'banana' || (!Object.prototype.hasOwnProperty.call(value, 'provider') && /^gemini-.*image/i.test(storedModel))
+    ? 'banana'
+    : 'gpt';
   return {
+    provider,
+    bananaAspectRatio: BANANA_RATIOS.includes(value.bananaAspectRatio) ? value.bananaAspectRatio : '1:1',
+    bananaImageSize: BANANA_SIZES.includes(value.bananaImageSize) ? value.bananaImageSize : 'auto',
     count: readImageCount(value.count ?? DEFAULT_IMAGE_COUNT) ?? DEFAULT_IMAGE_COUNT,
     apiMode: normalizeApiMode(value.apiMode),
     mode: storedMode === 'edit' || storedMode === 'mask' ? storedMode : 'generate',
     prompt: stringValue(value.prompt),
     responseModel: stringValue(value.responseModel) || DEFAULT_RESPONSE_MODEL,
-    model: stringValue(value.model) || DEFAULT_IMAGE_MODEL,
+    model: storedModel || (provider === 'banana' ? DEFAULT_BANANA_MODEL : DEFAULT_IMAGE_MODEL),
     size: normalizedSize.size,
     customSizeWidth: normalizedSize.customSizeWidth,
     customSizeHeight: normalizedSize.customSizeHeight,
@@ -3000,7 +3294,8 @@ function createHistoryButton(entry) {
   card.className = `history-item${state.activeHistoryId === entry.id ? ' active' : ''}`;
   card.setAttribute('role', 'button');
   card.setAttribute('tabindex', '0');
-  card.setAttribute('aria-label', `恢复历史记录：${entry.title || entry.form.prompt?.split('，')[0] || '未命名图片'}`);
+  const providerLabel = entry.form.provider === 'banana' ? 'Banana' : 'GPT';
+  card.setAttribute('aria-label', `恢复历史记录（${providerLabel}）：${entry.title || entry.form.prompt?.split('，')[0] || '未命名图片'}`);
   card.addEventListener('click', (event) => {
     if (event.target.closest('.history-delete')) return;
     restoreHistoryEntry(entry);
@@ -3020,7 +3315,12 @@ function createHistoryButton(entry) {
   textWrap.className = 'history-copy';
   const title = document.createElement('div');
   title.className = 'history-title truncate';
-  title.textContent = entry.title || entry.form.prompt?.split('，')[0] || '未命名图片';
+  const provider = document.createElement('span');
+  provider.className = `history-provider history-provider-${entry.form.provider === 'banana' ? 'banana' : 'gpt'}`;
+  provider.textContent = providerLabel;
+  const titleText = document.createElement('span');
+  titleText.className = 'history-title-text truncate';
+  titleText.textContent = entry.title || entry.form.prompt?.split('，')[0] || '未命名图片';
   const remove = document.createElement('button');
   remove.type = 'button';
   remove.className = 'history-delete';
@@ -3028,7 +3328,7 @@ function createHistoryButton(entry) {
   remove.title = '删除历史记录';
   remove.innerHTML = '<svg class="icon" aria-hidden="true"><use href="#icon-trash"/></svg>';
   remove.addEventListener('click', (event) => deleteHistoryEntry(entry, event));
-  title.appendChild(remove);
+  title.replaceChildren(provider, titleText, remove);
   const prompt = document.createElement('div');
   prompt.className = 'history-prompt truncate';
   prompt.textContent = entry.description || entry.form.prompt || '未记录提示词';
@@ -3061,6 +3361,10 @@ async function deleteHistoryEntry(entry, event) {
 }
 
 function restoreHistoryEntry(entry) {
+  if (state.submitting) return;
+  switchProvider(entry.form.provider || 'gpt', false);
+  el.bananaAspectRatio.value = entry.form.bananaAspectRatio || '1:1';
+  el.bananaImageSize.value = entry.form.bananaImageSize || 'auto';
   clearLocalPreviews(state.sourceImages);
   state.sourceImages = [];
   resetMaskEditor();
@@ -3077,6 +3381,8 @@ function restoreHistoryEntry(entry) {
     el.imageModel.appendChild(option);
   }
   el.imageModel.value = model;
+  persistImageModelSelection();
+  updateProviderUI();
   el.size.value = entry.form.size;
   el.customSizeWidth.value = entry.form.customSizeWidth;
   el.customSizeHeight.value = entry.form.customSizeHeight;
@@ -3137,7 +3443,7 @@ function formatHistoryTime(value) {
 
 function formatHistoryMeta(entry) {
   const modeLabel = entry.form.mode === 'generate' ? '文生图' : entry.form.mode === 'mask' ? '局部重绘' : '图生图';
-  const apiModeLabel = normalizeApiMode(entry.form.apiMode) === 'images' ? 'Images API' : 'Responses API';
+  const apiModeLabel = entry.form.provider === 'banana' ? 'Banana' : normalizeApiMode(entry.form.apiMode) === 'images' ? 'Images API' : 'Responses API';
   const responseModel = entry.form.responseModel || DEFAULT_RESPONSE_MODEL;
   const imageModel = entry.form.model || DEFAULT_IMAGE_MODEL;
   const size = formatHistorySize(entry.form);
@@ -3148,6 +3454,7 @@ function formatHistoryMeta(entry) {
 }
 
 function formatHistorySize(form) {
+  if (form.provider === 'banana') return formatBananaSize(form.bananaAspectRatio, form.model.startsWith('gemini-3') ? form.bananaImageSize : 'auto');
   if (form.size === CUSTOM_SIZE_VALUE) return `${form.customSizeWidth}x${form.customSizeHeight}`;
   return form.size || DEFAULT_SIZE;
 }
