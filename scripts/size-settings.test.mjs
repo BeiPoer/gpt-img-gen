@@ -11,7 +11,9 @@ function element() {
     value: '', textContent: '', dataset: {}, events: {}, options: [], children: [],
     setAttribute(name, value) { this[name] = value; },
     set innerHTML(value) { this.options = []; this.value = ''; },
-    appendChild(option) { this.options.push(option); if (this.options.length === 1) this.value = option.value; },
+    appendChild(option) { this.children.push(option); this.options.push(option); if (this.options.length === 1) this.value = option.value; },
+    append(...children) { this.children.push(...children); },
+    replaceChildren(...children) { this.children = children; },
     addEventListener(name, handler) { this.events[name] = handler; },
     classList: {
       add(name) { classes.add(name); },
@@ -248,3 +250,27 @@ vm.runInContext('resetForm()', context);
 assert.equal(Number(quantity.value), 1);
 assert.equal(submit.textContent, '开始生成');
 console.log('Generation count: controls, limits, all request modes, multi-image parsing and history/reset passed.');
+
+// Read intrinsic dimensions in both cards, including old history with no dimension metadata.
+const findClass = (node, name) => node.className === name ? node : node.children.map((child) => findClass(child, name)).find(Boolean);
+const resultCard = vm.runInContext('createResultCard({url:"https://example.invalid/image.png",fileName:"image.png"}, 0)', context);
+const resultImg = findClass(resultCard, 'result-image');
+const resultDimensions = findClass(resultCard, 'pill image-dimensions');
+assert.equal(resultDimensions.textContent, '尺寸读取中…');
+Object.assign(resultImg, { naturalWidth: 1234, naturalHeight: 5678, width: 200, height: 300 });
+resultImg.events.load();
+assert.equal(resultDimensions.textContent, '1234x5678');
+for (const count of [1, 2]) {
+  const historyCard = vm.runInContext(`createHistoryButton({form:{provider:'gpt'},results:Array(${count}).fill({url:'https://example.invalid/old.png'}),savedAt:'2026-09-18'})`, context);
+  const thumb = findClass(historyCard, 'history-cover');
+  const label = findClass(historyCard, 'pill image-dimensions');
+  Object.assign(thumb, { naturalWidth: 2048, naturalHeight: 1152 });
+  thumb.events.load();
+  assert.equal(label.textContent, `${count > 1 ? '封面 ' : ''}2048x1152`);
+}
+context.cachedImg = Object.assign(element(), { complete: true, naturalWidth: 640, naturalHeight: 480 });
+assert.equal(vm.runInContext('createImageDimensions(cachedImg).textContent', context), '640x480');
+Object.assign(resultImg, { naturalWidth: 0, naturalHeight: 0 });
+resultImg.events.error();
+assert.equal(resultDimensions.textContent, '尺寸不可用');
+console.log('Image dimensions: result/history cards, multiple images, intrinsic size, cached loads and failed loads passed.');

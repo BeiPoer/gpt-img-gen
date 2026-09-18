@@ -2836,6 +2836,20 @@ function renderResults() {
   el.resultBody.appendChild(grid);
 }
 
+function createImageDimensions(img, prefix = '') {
+  const label = document.createElement('span');
+  label.textContent = `${prefix}尺寸读取中…`;
+  const update = () => {
+    label.textContent = img.naturalWidth > 0 && img.naturalHeight > 0
+      ? `${prefix}${img.naturalWidth}x${img.naturalHeight}`
+      : `${prefix}尺寸不可用`;
+  };
+  img.addEventListener('load', update);
+  img.addEventListener('error', update);
+  if (img.complete) update();
+  return label;
+}
+
 function createResultCard(image, index) {
   const card = document.createElement('article');
   card.className = 'result-item';
@@ -2866,6 +2880,9 @@ function createResultCard(image, index) {
 
   const body = document.createElement('div');
   body.className = 'result-body';
+  const dimensions = createImageDimensions(img);
+  dimensions.className = 'pill image-dimensions';
+  body.appendChild(dimensions);
   if (image.isPartial) {
     const partial = document.createElement('span');
     partial.className = 'pill partial';
@@ -3335,7 +3352,9 @@ function createHistoryButton(entry) {
   const time = document.createElement('div');
   time.className = 'history-time truncate';
   time.textContent = formatHistoryTime(entry.savedAt);
-  textWrap.append(title, prompt, time);
+  const dimensions = createImageDimensions(thumb, entry.results.length > 1 ? '封面 ' : '');
+  dimensions.className = 'pill image-dimensions';
+  textWrap.append(title, prompt, dimensions, time);
   card.append(thumb, textWrap);
   return card;
 }

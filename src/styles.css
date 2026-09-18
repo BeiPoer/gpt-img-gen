@@ -1743,6 +1743,7 @@ body[data-provider="banana"] .history-auto input { accent-color:#1d4ed8; }
 .history-delete .icon { width:16px; height:16px; }
 .history-prompt { margin-top:2px; color:#71849a; font-size:12px; line-height:20px; }
 .history-time { margin-top:4px; color:#8497ab; font-size:12px; line-height:18px; font-weight:500; }
+.image-dimensions { width:fit-content; padding:2px 8px; line-height:18px; font-variant-numeric:tabular-nums; }
 .history-badges, .history-thumbs { display:none; }
 body[data-mode="edit"] .source-header .btn-sm,
 body[data-mode="mask"] .source-header .btn-sm { display:inline-flex; }
