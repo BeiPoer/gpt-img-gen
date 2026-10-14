@@ -234,10 +234,6 @@ function defaultImageModelOptions() {
   return (isBanana() ? BANANA_MODELS : [DEFAULT_IMAGE_MODEL]).map((value) => ({ value, label: value }));
 }
 
-function isBananaModel(value) {
-  return /^gemini-.*image/i.test(value);
-}
-
 function supportsBananaResolution() {
   return /^gemini-3/i.test(resolveImageModelValue());
 }
@@ -253,7 +249,7 @@ function persistImageModelSelection() {
 
 function restoreImageModelSelection() {
   const value = localStorage.getItem(providerStorageKey(IMAGE_MODEL_CACHE_KEY));
-  if (!value || !(isBanana() ? isBananaModel(value) : value.startsWith('gpt-image'))) return;
+  if (!value || (!isBanana() && !value.startsWith('gpt-image'))) return;
   if (!Array.from(el.imageModel.options).some((option) => option.value === value)) {
     const option = document.createElement('option');
     option.value = option.textContent = value;
@@ -1209,8 +1205,8 @@ function fillModelSelect(select, options) {
 function applyLoadedModelOptions(allModels, configSignature, fromCache) {
   const selectedImageModel = resolveImageModelValue();
   const responseModels = allModels.filter((option) => !isImageGenerationModelId(option.value));
-  const imageModels = allModels.filter((option) => isBanana() ? isBananaModel(option.value) : option.value.toLowerCase().startsWith('gpt-image'));
-  if (isBanana() && !imageModels.length) showToast('接口未列出 Gemini 图片模型，保留默认选项；请确认 Key 的模型权限。', 'warning');
+  const imageModels = isBanana() ? allModels : allModels.filter((option) => option.value.toLowerCase().startsWith('gpt-image'));
+  if (isBanana() && !imageModels.length) showToast('接口未返回可用模型，保留默认选项；请确认 Key 的模型权限。', 'warning');
   state.responseModelOptions = responseModels.length > 0
     ? responseModels
     : [{ value: DEFAULT_RESPONSE_MODEL, label: DEFAULT_RESPONSE_MODEL }];
@@ -1838,7 +1834,6 @@ function cancelGeneration() {
 function validateGenerationForm() {
   if (isBanana()) {
     if (state.mode === 'mask') return 'Banana 不支持局部重绘，请使用图生图。';
-    if (!isBananaModel(resolveImageModelValue())) return '请选择 Gemini 图片模型。';
     if (!BANANA_RATIOS.includes(el.bananaAspectRatio.value) || !BANANA_SIZES.includes(el.bananaImageSize.value)) return '请选择有效的 Banana 比例和分辨率。';
   }
   if (readImageCount() === null) return '生成数量必须为 1–10 的整数。';
