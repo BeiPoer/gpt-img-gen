@@ -1,0 +1,21 @@
+README.md
+  s_f7c58e3e26abf8::t_121e40ce1d0dd8 38
+src/main.js
+  s_f7c58e3e26abf8::t_121e40ce1d0dd8 252,1208-1209
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "52370dc3e3c7e3fb278218cf8db1425eb99e65ac",
+  "prompts": {},
+  "sessions": {
+    "s_f7c58e3e26abf8": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13842-b7fc-7200-ab2c-66274abd8e81",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "beipoer <forczc@foxmail.com>"
+    }
+  }
+}
